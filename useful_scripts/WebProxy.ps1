@@ -20,6 +20,8 @@
 
 # License: All rights reserved. (c) Operative Thunny. Not for use.
 
+using namespace System.Net
+
 # Create the runspace pool with the desired number of threads
 $minThreads = 1
 $maxThreads = 10
@@ -28,7 +30,9 @@ $runspacePool.Open()
 
 # Create a script block for processing each request
 $processRequestScript = {
-    param($context)
+    param([HttpListenerContext]$context)
+    
+    Write-Host -BackgroundColor Green "Handling an incoming HTTP request!"
 
     try {
         # Get the original destination host and port
@@ -37,7 +41,7 @@ $processRequestScript = {
         $destinationPort = $context.Request.Url.Port
 
         # Create a new HTTP request to the original destination
-        $proxyRequest = [System.Net.WebRequest]::Create("http://${destinationHost}:${destinationPort}" + $context.Request.Url.PathAndQuery)
+        $proxyRequest = [WebRequest]::Create("http://${destinationHost}:${destinationPort}" + $context.Request.Url.PathAndQuery)
         $proxyRequest.Method = $context.Request.HttpMethod
         $proxyRequest.ContentType = $context.Request.ContentType
 
@@ -65,6 +69,7 @@ $processRequestScript = {
     }
     catch {
         # Handle any exceptions that occur during the proxying process
+        $context.Response.Write("YOU DONE FUCKED UP, A-A-RON: $($_ | ConvertTo-Json)")
         $context.Response.StatusCode = 500
         $context.Response.Close()
     }
@@ -72,25 +77,40 @@ $processRequestScript = {
     $context.Dispose()
 }
 
-# Create an HTTP listener and start it
-$listener = New-Object System.Net.HttpListener
-$listener.Prefixes.Add("http://+:8080/")
-$listener.Start()
 
-Write-Host "Proxy server started. Listening on http://+:8080/"
+try {
+    # Create an HTTP listener and start it
+    #$listener = New-Object System.Net.HttpListener
+    $listener = [HttpListener]::new()
+    $listener.Prefixes.Add("http://localhost:8080/")
+    #$listener.Prefixes.Add("https://localhost:8080/")
+    $listener.Start()
 
-# Process incoming requests
-while ($listener.IsListening) {
-    # Accept an incoming connection
-    $context = $listener.GetContext()
+    Write-Host "Proxy server started. Listening on $($listener.Prefixes -join ', ')"
 
-    # Submit the request processing to the runspace pool
-    $runspacePool.QueueScriptBlock($processRequestScript, $context)
+    # Process incoming requests
+    while ($listener.IsListening) {
+        # Check if a request is available within a timeout
+        if ($listener.BeginGetContext({ }, $null).AsyncWaitHandle.WaitOne(100)) {
+            Write-Host "An incoming request has triggered the asynch begin get context."
+            # Accept the incoming connection
+            $context = $listener.EndGetContext($listener.BeginGetContext({ }, $null))
+
+            # Submit the request processing to the runspace pool
+            $runspacePool.QueueScriptBlock($processRequestScript, $context)
+        }
+    }
 }
+catch {
+    Write-Host -BackgroundColor Red "An error occurred while processing the request!"
+    Write-Host -BackgroundColor Red $_.Exception.Message
+}
+finally {
+    Write-Host -BackgroundColor Red "The proxy server shall now stop, close, and dispose!"
+    # Stop the listener when done
+    $listener.Stop()
 
-# Stop the listener when done
-$listener.Stop()
-
-# Close the runspace pool
-$runspacePool.Close()
-$runspacePool.Dispose()
+    # Close the runspace pool
+    $runspacePool.Close()
+    $runspacePool.Dispose()
+}

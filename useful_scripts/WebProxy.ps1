@@ -1,7 +1,8 @@
 #/usr/bin/env pwsh
 # Interesting reference material: https://github.com/jpetazzo/squid-in-a-can
+#
 #$ This is a web proxy script, it will eventually be a proxy to handle windows authentication to a sharepoint server seemlessly for a tool that does not support authentication. Eventual goal is to also have this set up as an inline transparent proxy that handles caching too.
-# TODO: Documentation
+#
 # TODO: figure out how to bind to non localhost without admin access on a non privileged port. This is the error:
 # > .\WebProxy.ps1
 # MethodInvocationException: C:\Users\\WebProxy.ps1:56:1
@@ -9,14 +10,6 @@
 #   56 |  $listener.Start()
 #      |  ~~~~~~~~~~~~~~~~~
 #      | Exception calling "Start" with "0" argument(s): "Access is denied."
-# Proxy server started. Listening on http://+:8080/
-# MethodInvocationException: C:\Users\\WebProxy.ps1:70:1
-# Line |
-#   70 |  $listener.Stop()
-#      |  ~~~~~~~~~~~~~~~~
-#      | Exception calling "Stop" with "0" argument(s): "Cannot access a disposed object. Object name: 'System.Net.HttpListener'."
-
-# TODO: Figure out error where the script can't be killed with CTRL+C from the command line. It hangs on the getContext line
 
 # License: All rights reserved. (c) Operative Thunny. Not for use.
 
@@ -31,12 +24,14 @@ $runspacePool.Open()
 # Create a script block for processing each request
 $processRequestScript = {
     param([HttpListenerContext]$context)
+    #param($context)
     
     Write-Host -BackgroundColor Green "Handling an incoming HTTP request!"
 
     try {
         # Get the original destination host and port
 
+        # TODO: Do more parsing to be able to handle any port and proto (tls) etc... here and where the webrequest is created to the destination server:
         $destinationHost = $context.Request.Headers["Host"]
         $destinationPort = $context.Request.Url.Port
 

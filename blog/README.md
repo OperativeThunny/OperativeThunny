@@ -12,9 +12,11 @@ I am passionate about computer security, novel coding techniques and procedures,
 
 ## Blog Posts
 
-I write new blog posts every week. You can find a list of all my blog posts here:
+I write new blog posts ~~every week~~ at random times that are not possible to know. You can find some posts in the files alongside this readme.
 
-* [List of Blog Posts]
+* [20230602.md](20230602.md)
+* [20230611.md](20230611.md)
+* [More blog posts go here]
 
 ## Contact Me
 

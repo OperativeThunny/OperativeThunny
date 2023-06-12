@@ -1,4 +1,4 @@
-#/usr/bin/env pwsh
+#!/usr/bin/env pwsh
 # Interesting reference material: https://github.com/jpetazzo/squid-in-a-can
 #
 #$ This is a web proxy script, it will eventually be a proxy to handle windows authentication to a sharepoint server seemlessly for a tool that does not support authentication. Eventual goal is to also have this set up as an inline transparent proxy that handles caching too.
@@ -77,7 +77,10 @@ try {
     # Create an HTTP listener and start it
     #$listener = New-Object System.Net.HttpListener
     $listener = [HttpListener]::new()
-    $listener.Prefixes.Add("http://localhost:8080/")
+    # $listener.Prefixes.Add("http://localhost:8080/")
+    # $listener.Prefixes.Add("https://localhost:8443/")
+    $listener.Prefixes.Add("http://+:8080/")
+    $listener.Prefixes.Add("https://+:8443/")
     #$listener.Prefixes.Add("https://localhost:8080/")
     $listener.Start()
 
@@ -86,7 +89,9 @@ try {
     # Process incoming requests
     while ($listener.IsListening) {
         # Check if a request is available within a timeout
-        if ($listener.BeginGetContext({ }, $null).AsyncWaitHandle.WaitOne(100)) {
+        if ($listener.BeginGetContext({
+            Write-Host -BackgroundColor Yellow "Inside begin get context."
+         }, $null).AsyncWaitHandle.WaitOne(100)) {
             Write-Host "An incoming request has triggered the asynch begin get context."
             # Accept the incoming connection
             $context = $listener.EndGetContext($listener.BeginGetContext({ }, $null))

@@ -151,7 +151,10 @@ Set-Alias -Name await -Value Wait-Task -Force
 $handleIndividualRequest = {
     [cmdletbinding()]
     param(
-        [HttpListenerContext]$context
+        [HttpListener]$listener,
+        [HttpListenerContext]$context,
+        [HttpListenerRequest]$request,
+        [HttpListenerResponse]$response
     )
 
     Write-Output "Handling an incoming HTTP request!"
@@ -161,13 +164,14 @@ $handleIndividualRequest = {
 
         # TODO: Do more parsing to be able to handle any port and proto (tls) etc...
         # here and where the webrequest is created to the destination server:
-        $destinationHost = $context.Request.Headers["Host"]
-        $destinationPort = $context.Request.Url.Port
+        $destinationHost = $request.Headers["Host"]
+        $destinationPort = $request.Url.Port
 
         $context.Response.Write("YOU DONE MESSED UP, A-A-RON: $($_ | ConvertTo-Json)")
         $context.Response.StatusCode = 500
         $context.Response.Close()
         $context.Dispose()
+        exit;
         return $null
         # Create a new HTTP request to the original destination
         #$proxyRequest = [WebRequest]::Create("http://${destinationHost}:${destinationPort}" + $context.Request.Url.PathAndQuery)
@@ -211,32 +215,31 @@ $handleIndividualRequest = {
     $context.Dispose()
 }
 
+
+
+
+
 $dispatchHandlingThread = {
     [cmdletbinding()]
-    Param(
-        [PSCustomObject]$asyncContext
-    )
+    param($result)
+    Write-Host "Dispatching a handling thread!"
 
-    if ($asyncContext -eq $null) {
-        Write-Host "The asyncContext is null."
-        return $false
+    if ($null -eq $result -or $null -eq $result.AsyncState) {
+        Write-Host -BackgroundColor Red "Unable to dispatch a handling thread because the result or result.AsyncState is null!"
+        throw "Unable to dispatch a handling thread because the result or result.AsyncState is null!"
+        exit
     }
-    # TODO: refactor this to use working code from the internet.
-    #[System.Net.HttpListener]$listener = $result.AsyncState;
-    $asyncResult = $asyncContext.listnerResult
-    $processRequestScript = $asyncContext.processRequestScript
 
-    if ($asyncResult.IsCompleted) {
-        Write-Host "The asyncresult is completed."
-    } else {
-        Write-Host "exiting the callback because the asyncresult is completed."
-        return $false
-    }
-    Write-Host "Inside begin get context."
-    # Get the listener that was used to process the request
-    $listener = $asyncResult.AsyncState
-    $context = $listener.EndGetContext($asyncResult)
-    Start-ThreadJob -ScriptBlock $processRequestScript -ArgumentList $context
+    [System.Net.HttpListener]$listener = $result.AsyncState;
+    $context = $listener.EndGetContext($result.listnerResult);
+    $request = $context.Request
+    $response = $context.Response
+
+    Write-Host "We are at start thread!"
+
+    Start-ThreadJob -ScriptBlock $processRequestScript -ArgumentList $listener, $context, $request, $response
+    Start-Sleep -Seconds 1
+    $response.OutputStream.Close()
 }
 
 
@@ -254,10 +257,8 @@ try {
     Write-Host "Press Ctrl+C to stop the proxy server."
 
     $successfullyObtainedBeginListenerContext = $listener.BeginGetContext(
-        (New-ScriptBlockCallback $dispatchHandlingThread), [PSCustomObject]@{
-            listnerResult = $listener
-            processRequestScript = $handleIndividualRequest
-        }
+        (New-ScriptBlockCallback -Callback $dispatchHandlingThread),
+        $listener
     );
 
     # Process incoming requests
@@ -267,16 +268,16 @@ try {
             Write-Host "An incoming request has triggered the asynch begin get context. We will now handle it, papi."
 
             $successfullyObtainedBeginListenerContext = $listener.BeginGetContext(
-                (New-ScriptBlockCallback $dispatchHandlingThread), [PSCustomObject]@{
-                    listnerResult = $listener
-                    processRequestScript = $handleIndividualRequest
-                }
+                (New-ScriptBlockCallback -Callback $dispatchHandlingThread),
+                $listener
             );
+
         }
     }
 } catch {
     Write-Host -BackgroundColor Red "An error occurred while processing the request!"
-    Write-Host -BackgroundColor Red $_.Exception.Message
+    Write-Host -BackgroundColor Yellow $_.Exception.Message
+    Write-Host -BackgroundColor Gray (ConvertTo-Json -Depth 99 $_)
 }
 finally {
     Write-Host -BackgroundColor Red "The proxy server shall now stop, close, and dispose!"

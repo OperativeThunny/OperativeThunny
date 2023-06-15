@@ -1,5 +1,12 @@
 #!/usr/bin/env pwsh
 <#
+G U M B Y P R O X Y
+GumbyProxy is a flexible web proxy that can be used to intercept and modify HTTP requests and responses, perform caching, and act as either a forward proxy or a reverse proxy providing caching capabilities.
+It is written in PowerShell and uses the .NET HttpListener class to listen for incoming HTTP requests. 
+It is designed to be used as a local proxy server, but can also be used as a gateway proxy server. 
+It is named after Gumby, the flexible clay character from the 1950s children's television show The Howdy Doody Show, and also named after the Monty Python sketch Gumby Brain Specialist.
+#>
+<#
 # Interesting reference material: https://github.com/jpetazzo/squid-in-a-can
 #
 #$ This is a web proxy script, it will eventually be a proxy to handle windows authentication to a sharepoint server seemlessly for a tool that does not support authentication. Eventual goal is to also have this set up as an inline transparent proxy that handles caching too.
@@ -27,10 +34,77 @@ $maxThreads = 10
 $runspacePool = [runspacefactory]::CreateRunspacePool($minThreads, $maxThreads)
 $runspacePool.Open()
 
+# For this function info see https://stackoverflow.com/questions/16281955/using-asynccallback-in-powershell and the links in the comments.
+function New-ScriptBlockCallback
+{
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '')]
+    param(
+        [parameter(Mandatory)]
+        [ValidateNotNullOrEmpty()]
+        [scriptblock]$Callback
+    )
+    # https://web.archive.org/web/20160404214529/http://poshcode.org/1382
+    # 
+<#
+    .SYNOPSIS
+        Allows running ScriptBlocks via .NET async callbacks.
+ 
+    .DESCRIPTION
+        Allows running ScriptBlocks via .NET async callbacks. Internally this is
+        managed by converting .NET async callbacks into .NET events. This enables
+        PowerShell 2.0 to run ScriptBlocks indirectly through Register-ObjectEvent.        
+ 
+    .PARAMETER Callback
+        Specify a ScriptBlock to be executed in response to the callback.
+        Because the ScriptBlock is executed by the eventing subsystem, it only has
+        access to global scope. Any additional arguments to this function will be
+        passed as event MessageData.
+       
+    .EXAMPLE
+        You wish to run a scriptblock in reponse to a callback. Here is the .NET
+        method signature:
+       
+        void Bar(AsyncCallback handler, int blah)
+       
+        ps> [foo]::bar((New-ScriptBlockCallback { ... }), 42)                        
+ 
+    .OUTPUTS
+        A System.AsyncCallback delegate.
+#>
+    # Is this type already defined?
+    if (-not ( 'CallbackEventBridge' -as [type])) {
+        Add-Type @' 
+        using System; 
+
+        public sealed class CallbackEventBridge { 
+            public event AsyncCallback CallbackComplete = delegate { }; 
+
+            private CallbackEventBridge() {} 
+
+            private void CallbackInternal(IAsyncResult result) { 
+                CallbackComplete(result); 
+            } 
+
+            public AsyncCallback Callback { 
+                get { return new AsyncCallback(CallbackInternal); } 
+            } 
+
+            public static CallbackEventBridge Create() { 
+                return new CallbackEventBridge(); 
+            } 
+        } 
+'@
+    }
+    $bridge = [callbackeventbridge]::create()
+    Register-ObjectEvent -InputObject $bridge -EventName callbackcomplete -Action $Callback -MessageData $args > $null
+    $bridge.Callback
+}
 
 # Create a script block for processing each request
 $processRequestScript = {
-    param([HttpListenerContext]$context)
+    param(
+        [HttpListenerContext]$context
+    )
     #param($context)
 
     Write-Host -BackgroundColor Green "Handling an incoming HTTP request!"
@@ -92,39 +166,50 @@ try {
     $listener.Start()
 
     Write-Host "Proxy server started. Listening on $($listener.Prefixes -join ', ')"
-    write-host $(ConvertTo-Json -InputObject $runspacePool.GetAvailableRunspaces())
+    Write-Host "Press Ctrl+C to stop the proxy server."
+    # $myCallback = [AsyncCallback]{
+    #     param( $asyncResult)
+    #     # callback code
+    #     if ($asyncResult.isCompleted) {
+    #       get-date
+    #     }
+    #   }    
     # Process incoming requests
     while ($listener.IsListening) {
         # Check if a request is available within a timeout
-        if ($listener.BeginGetContext({
-            Param($asyncResult)
+        $successfullyObtainedBeginListenerContext = $listener.BeginGetContext(
+        (New-ScriptBlockCallback {
+            Param(
+                [PSCustomObject]$asyncContext
+            )
+            
+            if ($asyncContext -eq $null) {
+                Write-Host "The asyncContext is null."
+                return $false
+            }
+            
+            $asyncResult = $asyncContext.asyncResult
+            $processRequestScript = $asyncContext.processRequestScript
 
-            Write-Host -BackgroundColor Yellow "Inside begin get context."
-
+            convertto-json $asyncContext
+            if ($asyncResult.IsCompleted) {
+                Write-Host "The asyncresult is completed."    
+            } else {
+                Write-Host "exiting the callback because the asyncresult is completed."
+                return $false
+            }
+            Write-Host "Inside begin get context."
             # Get the listener that was used to process the request
             $listener = $asyncResult.AsyncState
-
-            # Accept the incoming connection
-            #$listener.EndGetContext($asyncResult)
             $context = $listener.EndGetContext($asyncResult)
+            Start-ThreadJob -ScriptBlock $processRequestScript -ArgumentList $context
+        }), [PSCustomObject]@{
+            asyncResult = $listener
+            processRequestScript = $processRequestScript
+        }).AsyncWaitHandle.WaitOne(1000)
 
-            # Assign a default runspace to the current thread
-            [Runspace]::DefaultRunspace = $runspacePool.GetRunspace()
-
-            # Invoke the request processing function
-            #ProcessRequest $context
-            $runspacePool.QueueScriptBlock($processRequestScript, $context)
-        }, $listener).AsyncWaitHandle.WaitOne(100)) {
+        if ($successfullyObtainedBeginListenerContext) {
             Write-Host "An incoming request has triggered the asynch begin get context."
-            # # Accept the incoming connection
-            # $context = $listener.EndGetContext($listener.BeginGetContext({ }, $listener))
-
-            # #$runspacePool.GetAvailableRunspaces()
-            #  # Assign a default runspace to the current thread
-            # [Runspace]::DefaultRunspace = $runspacePool.GetRunspace()
-
-            # # Submit the request processing to the runspace pool
-            # $runspacePool.QueueScriptBlock($processRequestScript, $context)
         }
     }
 }
@@ -142,7 +227,7 @@ finally {
     $runspacePool.Dispose()
 }
 
-
+Write-Host 'Done'
 
 
 

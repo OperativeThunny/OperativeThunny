@@ -46,77 +46,19 @@ transparent proxy that handles caching too.
 
 using namespace System.Net
 
-# Create the runspace pool with the desired number of threads
-$minThreads = 1
-$maxThreads = 10
-$runspacePool = [runspacefactory]::CreateRunspacePool($minThreads, $maxThreads)
-$runspacePool.Open()
-
-# For this function info see https://stackoverflow.com/questions/16281955/using-asynccallback-in-powershell and the links in the comments.
-function New-ScriptBlockCallback
-{
-    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '')]
-    param(
-        [parameter(Mandatory)]
-        [ValidateNotNullOrEmpty()]
-        [scriptblock]$Callback
-    )
-    # https://web.archive.org/web/20160404214529/http://poshcode.org/1382
-    #
-<#
-    .SYNOPSIS
-        Allows running ScriptBlocks via .NET async callbacks.
-
-    .DESCRIPTION
-        Allows running ScriptBlocks via .NET async callbacks. Internally this is
-        managed by converting .NET async callbacks into .NET events. This enables
-        PowerShell 2.0 to run ScriptBlocks indirectly through Register-ObjectEvent.
-
-    .PARAMETER Callback
-        Specify a ScriptBlock to be executed in response to the callback.
-        Because the ScriptBlock is executed by the eventing subsystem, it only has
-        access to global scope. Any additional arguments to this function will be
-        passed as event MessageData.
-
-    .EXAMPLE
-        You wish to run a scriptblock in reponse to a callback. Here is the .NET
-        method signature:
-
-        void Bar(AsyncCallback handler, int blah)
-
-        ps> [foo]::bar((New-ScriptBlockCallback { ... }), 42)
-
-    .OUTPUTS
-        A System.AsyncCallback delegate.
-#>
-    # Is this type already defined?
-    if (-not ( 'CallbackEventBridge' -as [type])) {
-        Add-Type @'
-        using System;
-
-        public sealed class CallbackEventBridge {
-            public event AsyncCallback CallbackComplete = delegate { };
-
-            private CallbackEventBridge() {}
-
-            private void CallbackInternal(IAsyncResult result) {
-                CallbackComplete(result);
-            }
-
-            public AsyncCallback Callback {
-                get { return new AsyncCallback(CallbackInternal); }
-            }
-
-            public static CallbackEventBridge Create() {
-                return new CallbackEventBridge();
-            }
-        }
-'@
-    }
-    $bridge = [callbackeventbridge]::create()
-    Register-ObjectEvent -InputObject $bridge -EventName callbackcomplete -Action $Callback -MessageData $args > $null
-    $bridge.Callback
+# Verify the ability to run Start-ThreadJob, if it does not exist advise to install ThreadJob.
+if (-not (Get-Command -Name Start-ThreadJob -ErrorAction SilentlyContinue)) {
+    Write-Error -BackgroundColor Red "The Start-ThreadJob command is not available. Please install the ThreadJob module."
+    Write-Error -BackgroundColor Red "You can install it by running the following command:"
+    Write-Error -BackgroundColor Red "Install-Module -Name ThreadJob"
+    exit
 }
+
+# Create the runspace pool with the desired number of threads
+# $minThreads = 1
+# $maxThreads = 10
+# $runspacePool = [runspacefactory]::CreateRunspacePool($minThreads, $maxThreads)
+# $runspacePool.Open()
 
 # https://blog.ironmansoftware.com/powershell-async-method/
 # The below function and alias can be defined to simplify calling and awaiting async
@@ -151,26 +93,26 @@ Set-Alias -Name await -Value Wait-Task -Force
 $handleIndividualRequest = {
     [cmdletbinding()]
     param(
-        [HttpListener]$listener,
-        [HttpListenerContext]$context,
-        [HttpListenerRequest]$request,
-        [HttpListenerResponse]$response
+        [HttpListenerContext]$context
     )
 
-    Write-Output "Handling an incoming HTTP request!"
+    Write-Error "Handling an incoming HTTP request!"
 
     try {
+        $request = $context.Request
+        $response = $context.Response
         # Get the original destination host and port
-
         # TODO: Do more parsing to be able to handle any port and proto (tls) etc...
         # here and where the webrequest is created to the destination server:
         $destinationHost = $request.Headers["Host"]
         $destinationPort = $request.Url.Port
 
-        $context.Response.Write("YOU DONE MESSED UP, A-A-RON: $($_ | ConvertTo-Json)")
-        $context.Response.StatusCode = 500
-        $context.Response.Close()
+        $response.Write("YOU DONE MESSED UP, A-A-RON: $($_ | ConvertTo-Json)")
+        $response.StatusCode = 500
+        $response.Close()
         $context.Dispose()
+
+        #[System.Environment]::Exit(1)
         exit;
         return $null
         # Create a new HTTP request to the original destination
@@ -219,28 +161,28 @@ $handleIndividualRequest = {
 
 
 
-$dispatchHandlingThread = {
-    [cmdletbinding()]
-    param($result)
-    Write-Host "Dispatching a handling thread!"
+# $dispatchHandlingThread = {
+#     [cmdletbinding()]
+#     param($result)
+#     Write-Host "Dispatching a handling thread!"
 
-    if ($null -eq $result -or $null -eq $result.AsyncState) {
-        Write-Host -BackgroundColor Red "Unable to dispatch a handling thread because the result or result.AsyncState is null!"
-        throw "Unable to dispatch a handling thread because the result or result.AsyncState is null!"
-        exit
-    }
+#     if ($null -eq $result -or $null -eq $result.AsyncState) {
+#         Write-Error -BackgroundColor Red "Unable to dispatch a handling thread because the result or result.AsyncState is null!"
+#         throw "Unable to dispatch a handling thread because the result or result.AsyncState is null!"
+#         exit
+#     }
 
-    [System.Net.HttpListener]$listener = $result.AsyncState;
-    $context = $listener.EndGetContext($result.listnerResult);
-    $request = $context.Request
-    $response = $context.Response
+#     [System.Net.HttpListener]$listener = $result.AsyncState;
+#     $context = $listener.EndGetContext($result.listnerResult);
+#     $request = $context.Request
+#     $response = $context.Response
 
-    Write-Host "We are at start thread!"
+#     Write-Host "We are at start thread!"
 
-    Start-ThreadJob -ScriptBlock $processRequestScript -ArgumentList $listener, $context, $request, $response
-    Start-Sleep -Seconds 1
-    $response.OutputStream.Close()
-}
+#     Start-ThreadJob -ScriptBlock $processRequestScript -ArgumentList $listener, $context, $request, $response
+#     Start-Sleep -Seconds 1
+#     $response.OutputStream.Close()
+# }
 
 
 
@@ -248,6 +190,7 @@ $dispatchHandlingThread = {
 
 try {
     # Create an HTTP listener and start it
+    $jobs = @()
     $listener = [HttpListener]::new()
     # TODO: Prefixes and SSL certs should be configurable from the command line.
     $listener.Prefixes.Add("http://127.0.0.1:8080/")
@@ -256,23 +199,9 @@ try {
     Write-Host "Proxy server started. Listening on $($listener.Prefixes -join ', ')"
     Write-Host "Press Ctrl+C to stop the proxy server."
 
-    $successfullyObtainedBeginListenerContext = $listener.BeginGetContext(
-        (New-ScriptBlockCallback -Callback $dispatchHandlingThread),
-        $listener
-    );
-
-    # Process incoming requests
     while ($listener.IsListening) {
-        # Don't start listening to a new request until the previous one has been handled
-        if ($successfullyObtainedBeginListenerContext.IsCompleted -eq $true) {
-            Write-Host "An incoming request has triggered the asynch begin get context. We will now handle it, papi."
-
-            $successfullyObtainedBeginListenerContext = $listener.BeginGetContext(
-                (New-ScriptBlockCallback -Callback $dispatchHandlingThread),
-                $listener
-            );
-
-        }
+        # Dispatch a thread to handle the request
+        $job += Start-ThreadJob   -ScriptBlock $handleIndividualRequest -ArgumentList $(await ($listener.GetContextAsync()))
     }
 } catch {
     Write-Host -BackgroundColor Red "An error occurred while processing the request!"
@@ -280,115 +209,20 @@ try {
     Write-Host -BackgroundColor Gray (ConvertTo-Json -Depth 99 $_)
 }
 finally {
-    Write-Host -BackgroundColor Red "The proxy server shall now stop, close, and dispose!"
+    Write-Host -BackgroundColor Red -NoNewline "The proxy server shall now stop, close, and dispose!"
+    Write-Host ''
     # Stop the listener when done
     $listener.Stop()
+    $listener.Close()
+    $listener.Dispose()
 
     # Close the runspace pool
-    $runspacePool.Close()
-    $runspacePool.Dispose()
+    # $runspacePool.Close()
+    # $runspacePool.Dispose()
 
     Get-Job | Remove-Job -Force
 
-    Write-Host '' # New line to clear background.
     Write-Host 'Done.'
 }
 
-
-
-
-# Here is some code stolen from the internet that I may use later:
-# https://gist.github.com/nobodyguy/9950375
-# There is an updated version of this code: https://gist.github.com/mark05e/089b6668895345dd274fe5076f8e1271
-# $ServerThreadCode = {
-#     $listener = New-Object System.Net.HttpListener
-#     $listener.Prefixes.Add('http://+:8008/')
-
-#     $listener.Start()
-
-#     while ($listener.IsListening) {
-
-#         $context = $listener.GetContext() # blocks until request is received
-#         $request = $context.Request
-#         $response = $context.Response
-#         $message = "Testing server"
-
-#         # This will terminate the script. Remove from production!
-#         if ($request.Url -match '/end$') { break }
-
-#         [byte[]] $buffer = [System.Text.Encoding]::UTF8.GetBytes($message)
-#         $response.ContentLength64 = $buffer.length
-#         $response.StatusCode = 500
-#         $output = $response.OutputStream
-#         $output.Write($buffer, 0, $buffer.length)
-#         $output.Close()
-#     }
-
-#     $listener.Stop()
-# }
-
-# $serverJob = Start-Job $ServerThreadCode
-# Write-Host "Listening..."
-# Write-Host "Press Ctrl+C to terminate"
-
-# [console]::TreatControlCAsInput = $true
-
-# # Wait for it all to complete
-# while ($serverJob.State -eq "Running")
-# {
-#      if ([console]::KeyAvailable) {
-#         $key = [system.console]::readkey($true)
-#         if (($key.modifiers -band [consolemodifiers]"control") -and ($key.key -eq "C"))
-#         {
-#             Write-Host "Terminating..."
-#             $serverJob | Stop-Job
-#             Remove-Job $serverJob
-#             break
-#         }
-#     }
-
-#     Start-Sleep -s 1
-# }
-
-# # Getting the information back from the jobs
-# Get-Job | Receive-Job
-########################
-# This was from the internet as well:
-# From: https://stackoverflow.com/questions/56058924/httplistener-asynchronous-handling-with-powershell-new-scriptblockcallback-s
-# function New-ScriptBlockCallback
-# {
-#     [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '')]
-#     param(
-#         [parameter(Mandatory)]
-#         [ValidateNotNullOrEmpty()]
-#         [scriptblock]$Callback
-#     )
-
-#     # Is this type already defined?
-#     if (-not ( 'CallbackEventBridge' -as [type])) {
-#         Add-Type @'
-#             using System;
-
-#             public sealed class CallbackEventBridge {
-#                 public event AsyncCallback CallbackComplete = delegate { };
-
-#                 private CallbackEventBridge() {}
-
-#                 private void CallbackInternal(IAsyncResult result) {
-#                     CallbackComplete(result);
-#                 }
-
-#                 public AsyncCallback Callback {
-#                     get { return new AsyncCallback(CallbackInternal); }
-#                 }
-
-#                 public static CallbackEventBridge Create() {
-#                     return new CallbackEventBridge();
-#                 }
-#             }
-# '@
-#     }
-#     $bridge = [callbackeventbridge]::create()
-#     Register-ObjectEvent -InputObject $bridge -EventName callbackcomplete -Action $Callback -MessageData $args > $null
-#     $bridge.Callback
-# }
+# vim: set ft=powershell :

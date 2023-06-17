@@ -93,10 +93,11 @@ Set-Alias -Name await -Value Wait-Task -Force
 $handleIndividualRequest = {
     [cmdletbinding()]
     param(
-        [HttpListenerContext]$context
+        [System.Net.HttpListenerContext]$context
     )
 
     Write-Error "Handling an incoming HTTP request!"
+    Write-Error $context.Request.Url
 
     try {
         $request = $context.Request
@@ -106,20 +107,15 @@ $handleIndividualRequest = {
         # here and where the webrequest is created to the destination server:
         $destinationHost = $request.Headers["Host"]
         $destinationPort = $request.Url.Port
+        
+        $destinationHost = "doesnotexist.TESTING123.example.com"
+        $destinationPort = 80
 
-        $response.Write("YOU DONE MESSED UP, A-A-RON: $($_ | ConvertTo-Json)")
-        $response.StatusCode = 500
-        $response.Close()
-        $context.Dispose()
-
-        #[System.Environment]::Exit(1)
-        exit;
-        return $null
         # Create a new HTTP request to the original destination
-        #$proxyRequest = [WebRequest]::Create("http://${destinationHost}:${destinationPort}" + $context.Request.Url.PathAndQuery)
+        $proxyRequest = [WebRequest]::Create("http://${destinationHost}:${destinationPort}" + $context.Request.Url.PathAndQuery)
         # Don't use WebRequest or its derived classes for new development. Instead, use the System.Net.Http.HttpClient class.
         # See https://learn.microsoft.com/en-us/dotnet/api/system.net.webrequest?view=net-7.0
-        $client = [System.Net.Http.HttpClient]::new()
+        #$client = [System.Net.Http.HttpClient]::new()
 
         #$proxyRequest = [System.Net.HttpWebRequest]::Create("http://${destinationHost}:${destinationPort}" + $context.Request.Url.PathAndQuery)
         $proxyRequest.Method = $context.Request.HttpMethod
@@ -149,12 +145,20 @@ $handleIndividualRequest = {
     }
     catch {
         # Handle any exceptions that occur during the proxying process
-        $context.Response.Write("YOU DONE MESSED UP, A-A-RON: $($_ | ConvertTo-Json)")
+        $htout = [System.IO.StreamWriter]::new($context.Response.OutputStream)
+        #$htout = $context.Response.OutputStream
+        $htout.Write("YOU DONE MESSED UP, A-A-RON:")
+        $htout.Write($_.Exception.Message)
+        $htout.Write($_.Exception.StackTrace)
+        $htout.Write($_)
+        $htout.Flush()
         $context.Response.StatusCode = 500
         $context.Response.Close()
     }
 
-    $context.Dispose()
+    if ($null -ne $context) {
+        $context.Dispose()
+    }
 }
 
 
@@ -185,15 +189,20 @@ $handleIndividualRequest = {
 # }
 
 
-
+# https://stackoverflow.com/questions/10623907/null-coalescing-in-powershell`
+function Coalesce($a, $b) { if ($null -ne $a) { $a } else { $b } }
+function IfNull($a, $b, $c) { if ($null -eq $a) { $b } else { $c } }
+function IfTrue($a, $b, $c) { if ($a) { $b } else { $c } }
+New-Alias "??" Coalesce
+New-Alias "?:" IfTrue
 
 
 try {
     # Create an HTTP listener and start it
-    $jobs = @()
     $listener = [HttpListener]::new()
     # TODO: Prefixes and SSL certs should be configurable from the command line.
     $listener.Prefixes.Add("http://127.0.0.1:8080/")
+    $listener.Prefixes.Add("http://localhost:8080/")
     $listener.Start()
 
     Write-Host "Proxy server started. Listening on $($listener.Prefixes -join ', ')"
@@ -201,26 +210,35 @@ try {
 
     while ($listener.IsListening) {
         # Dispatch a thread to handle the request
-        $job += Start-ThreadJob   -ScriptBlock $handleIndividualRequest -ArgumentList $(await ($listener.GetContextAsync()))
+        #Write-Host -BackgroundColor Green "Waiting for connection."
+        (Start-ThreadJob -ScriptBlock $handleIndividualRequest -ArgumentList $(await ($listener.GetContextAsync()))) | Out-Null
+        #Get-Job | Receive-Job -Wait -AutoRemoveJob -Force
     }
 } catch {
     Write-Host -BackgroundColor Red "An error occurred while processing the request!"
     Write-Host -BackgroundColor Yellow $_.Exception.Message
-    Write-Host -BackgroundColor Gray (ConvertTo-Json -Depth 99 $_)
+    $_   
 }
 finally {
-    Write-Host -BackgroundColor Red -NoNewline "The proxy server shall now stop, close, and dispose!"
+    Write-Host -BackgroundColor Magenta "The proxy server shall now stop, close, and dispose!"
     Write-Host ''
+
     # Stop the listener when done
-    $listener.Stop()
-    $listener.Close()
-    $listener.Dispose()
+    if($null -ne $listener) {
+        $listener.Stop()
+        $listener.Close()
+        $listener.Dispose()
+    }
 
     # Close the runspace pool
-    # $runspacePool.Close()
-    # $runspacePool.Dispose()
+    if ($null -ne $runspacePool) {
+        $runspacePool.Close()
+        $runspacePool.Dispose()
+    }
 
-    Get-Job | Remove-Job -Force
+    Write-Host 'Waiting for all jobs to finish...'
+
+    Get-Job | Receive-Job -Wait -AutoRemoveJob -ErrorAction SilentlyContinue
 
     Write-Host 'Done.'
 }

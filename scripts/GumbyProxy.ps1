@@ -6,51 +6,49 @@
         / /_/ / /_/ / / / / / / /_/ / /_/ / ____/ /  / /_/ />  </ /_/ /
         \____/\__,_/_/ /_/ /_/_.___/\__, /_/   /_/   \____/_/|_|\__, /
                                    /____/                      /____/
+
 GumbyProxy is a flexible web proxy that can be used to intercept and modify
 HTTP requests and responses, perform caching, and act as either a forward proxy
 or a reverse proxy providing caching capabilities.
+
 It is written in PowerShell and uses the .NET HttpListener class to listen for
 incoming HTTP requests.
+
 It is designed to be used as a local proxy server, but can also be used as a
 gateway proxy server.
+
 It is named after Gumby, the flexible clay character from the 1950s children's
 television show The Howdy Doody Show, and also named after the Monty Python
 sketch Gumby Brain Specialist.
-#>
-<#
-# Interesting reference material: https://github.com/jpetazzo/squid-in-a-can
-#
-#$ This is a web proxy script, it will eventually be a proxy to handle windows
+
+License: All rights reserved. This code is not licensed for use by anyone other than the author.
+Copyright: OperativeThunny (C) 2023.
+
+Interesting reference material:
+    https://github.com/jpetazzo/squid-in-a-can
+    https://www.powershellgallery.com/packages/HttpListener/1.0.2/Content/HTTPListener.psm1
+    https://blog.ironmansoftware.com/powershell-async-method/
+    https://gist.github.com/aconn21/946c702cfcc08d10e1c0984535765ae3
+    https://www.b-blog.info/en/it-eng/implement-multi-threading-with-net-runspaces-in-powershell
+
+
+$ This is a web proxy script, it will eventually be a proxy to handle windows
 authentication to a sharepoint server seemlessly for a tool that does not
 support authentication. Eventual goal is to also have this set up as an inline
 transparent proxy that handles caching too.
-#
-# TODO: figure out how to bind to non localhost without admin access on a non
-# privileged port. This is the error:
-# > .\WebProxy.ps1
-# MethodInvocationException: C:\Users\\WebProxy.ps1:56:1
-# Line |
-#   56 |  $listener.Start()
-#      |  ~~~~~~~~~~~~~~~~~
-#      | Exception calling "Start" with "0" argument(s): "Access is denied."
-#
-# License: All rights reserved. This code is not licensed for use by anyone
-# other than the author.
-# Copyright: OperativeThunny (C) 2023.
-#
-# TODO: this code's foundational structure is broken because it was generated
-# by ChatGPT.
-# It needs to be changed so it can actually handle HTTP requests in a
-# multithreaded manner. there is no method on $runspacePool for QueueScriptBlock.
+
+TODO: figure out how to bind to non localhost without admin access on a non privileged port. This is the error:
+
 #>
 
 using namespace System.Net
 
 # Verify the ability to run Start-ThreadJob, if it does not exist advise to install ThreadJob.
 if (-not (Get-Command -Name Start-ThreadJob -ErrorAction SilentlyContinue)) {
-    Write-Error -BackgroundColor Red "The Start-ThreadJob command is not available. Please install the ThreadJob module."
-    Write-Error -BackgroundColor Red "You can install it by running the following command:"
-    Write-Error -BackgroundColor Red "Install-Module -Name ThreadJob"
+    Write-Error "The Start-ThreadJob command is not available. Please install the ThreadJob module."
+    Write-Error "You can install it by running the following command:"
+    Write-Error "Install-Module -Name ThreadJob"
+    Write-Error "Also check out this sick github repo: https://github.com/PowerShell/ThreadJob"
     exit
 }
 
@@ -86,11 +84,72 @@ function Wait-Task {
         $Tasks.ForEach( { $_.GetAwaiter().GetResult() })
     }
 }
-
 Set-Alias -Name await -Value Wait-Task -Force
 
-# Create a script block for processing each request
+
+
+
+
 $handleIndividualRequest = {
+    [cmdletbinding()]
+    param(
+        [System.Net.HttpListenerContext]$context,
+        [scriptblock[]]$handlers
+    )
+
+    $dispatcherAdjudicationValue = $context.Request.Headers.Get("Testing123123")
+
+    if ($null -ne $dispatcherAdjudicationValue -and $dispatcherAdjudicationValue -eq "true") {
+        <#
+https://drakelambert.dev/2021/09/Quick-HTTP-Listener-in-PowerShell.html
+$context.Response.StatusCode = 200
+$context.Response.ContentType = 'application/json'
+
+$responseJson = '{"big": "test"}'
+$responseBytes = [System.Text.Encoding]::UTF8.GetBytes($responseJson)
+$context.Response.OutputStream.Write($responseBytes, 0, $responseBytes.Length)
+
+$context.Response.Close() # end the response
+#>
+        Write-Output "Handling testing request."
+        # Return a simple testing html5 page with a css animation:
+        $html = Get-Content "TestingHTML.html"
+        $html = $html -join "`n"
+        $response = $context.Response
+        $response.StatusCode = 200
+        $response.StatusDescription = "OK"
+        $response.ContentLength64 = $html.Length
+        $response.ContentType = "text/html"
+        $htout = [System.IO.StreamWriter]::new($context.Response.OutputStream)
+        $htout.Write($html)
+        $htout.Flush()
+        $response.Close()
+        return "Test concluded."
+    }
+
+    # TODO: special header required to proxy?
+    # TODO: How do real http proxies handle this?
+    Write-Output "Sending the context to all the handlers until one returns a value."
+    $continueHandling = $null
+    foreach ($handler in $handlers) {
+        #$continueHandling = $handler.Invoke($context)
+        $continueHandling = $(Invoke-Command $handler -ArgumentList $context)
+        Write-Error "Successfully finished handling the jiggling of the bits."
+        if ($null -ne $continueHandling) {
+            return $continueHandling
+        }
+    }
+
+    $context.Response.StatusCode = 501
+    $context.Response.StatusDescription = "Not Implemented"
+    $htout = [System.IO.StreamWriter]::new($context.Response.OutputStream)
+    $htout.WriteLine("No handler function indicated that they handled the request by returning a non null value.")
+    $htout.Flush()
+    $context.Response.Close()
+}
+
+# Create a script block for processing each request
+$proxyRequest = {
     [cmdletbinding()]
     param(
         [System.Net.HttpListenerContext]$context
@@ -107,17 +166,27 @@ $handleIndividualRequest = {
         # here and where the webrequest is created to the destination server:
         $destinationHost = $request.Headers["Host"]
         $destinationPort = $request.Url.Port
-        
-        $destinationHost = "doesnotexist.TESTING123.example.com"
-        $destinationPort = 80
+        $connectionScheme = $request.Url.Scheme
 
+        Write-Error "Proxying to $destinationHost on port $destinationPort using $connectionScheme"
+        Write-Output "Destination host: $destinationHost"
+        Write-Output "Destination port: $destinationPort"
+        Write-Output "Connection scheme: $connectionScheme"
+        Write-Output "Request method: $($request.HttpMethod)"
+        Write-Output "Request content type: $($request.ContentType)"
+        Write-Output "Request headers: $($request.Headers)"
+        Write-Output "Request url: $($request.Url)"
+        Write-Output "Request url path and query: $($request.Url.PathAndQuery)"
+        Write-Output "Request url absolute path: $($request.Url.AbsolutePath)"
+        Write-Output "Request url absolute uri: $($request.Url.AbsoluteUri)"
         # Create a new HTTP request to the original destination
-        $proxyRequest = [WebRequest]::Create("http://${destinationHost}:${destinationPort}" + $context.Request.Url.PathAndQuery)
+        $proxyRequest = [WebRequest]::Create("$($connectionScheme)://$($destinationHost):$($destinationPort)$($context.Request.Url.PathAndQuery)")
         # Don't use WebRequest or its derived classes for new development. Instead, use the System.Net.Http.HttpClient class.
         # See https://learn.microsoft.com/en-us/dotnet/api/system.net.webrequest?view=net-7.0
         #$client = [System.Net.Http.HttpClient]::new()
 
         #$proxyRequest = [System.Net.HttpWebRequest]::Create("http://${destinationHost}:${destinationPort}" + $context.Request.Url.PathAndQuery)
+
         $proxyRequest.Method = $context.Request.HttpMethod
         $proxyRequest.ContentType = $context.Request.ContentType
 
@@ -142,15 +211,16 @@ $handleIndividualRequest = {
         $stream.Close()
 
         $context.Response.Close()
+
+        return $true
     }
     catch {
         # Handle any exceptions that occur during the proxying process
         $htout = [System.IO.StreamWriter]::new($context.Response.OutputStream)
         #$htout = $context.Response.OutputStream
-        $htout.Write("YOU DONE MESSED UP, A-A-RON:")
-        $htout.Write($_.Exception.Message)
-        $htout.Write($_.Exception.StackTrace)
-        $htout.Write($_)
+        $htout.WriteLine("YOU DONE MESSED UP, A-A-RON:")
+        $htout.WriteLine($_.Exception.Message)
+        $htout.WriteLine($($_ | ConvertTo-Json -Depth 3))
         $htout.Flush()
         $context.Response.StatusCode = 500
         $context.Response.Close()
@@ -159,6 +229,8 @@ $handleIndividualRequest = {
     if ($null -ne $context) {
         $context.Dispose()
     }
+
+    return $false
 }
 
 
@@ -210,14 +282,19 @@ try {
 
     while ($listener.IsListening) {
         # Dispatch a thread to handle the request
-        #Write-Host -BackgroundColor Green "Waiting for connection."
-        (Start-ThreadJob -ScriptBlock $handleIndividualRequest -ArgumentList $(await ($listener.GetContextAsync()))) | Out-Null
-        #Get-Job | Receive-Job -Wait -AutoRemoveJob -Force
+        # TODO: Figure out how to set the jobs to automatically output stdout to console and close and remove on their own or have the get job receive job be done asynch, maybe even in another job??
+        Write-Host -BackgroundColor Green "Waiting for connection..."
+        (Start-ThreadJob -ScriptBlock $handleIndividualRequest -ArgumentList $(await ($listener.GetContextAsync())), @($proxyRequest) ) | Out-Null
+
+        # Get output and remove jobs that have finished executing (hopefully not the one we just started):
+        Write-Host -BackgroundColor Green "=================== Finished Thread Output: "
+        Get-Job | Where-Object state -in Completed,Blocked,Failed,Stopped,Suspended,AtBreakpoint,Disconnected | Receive-Job -Wait -AutoRemoveJob -Force
+        Write-Host -BackgroundColor Green "============================================"
     }
 } catch {
     Write-Host -BackgroundColor Red "An error occurred while processing the request!"
     Write-Host -BackgroundColor Yellow $_.Exception.Message
-    $_   
+    $_
 }
 finally {
     Write-Host -BackgroundColor Magenta "The proxy server shall now stop, close, and dispose!"

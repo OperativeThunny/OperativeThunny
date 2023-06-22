@@ -218,7 +218,7 @@ $proxyRequest = {
         # Handle any exceptions that occur during the proxying process
         $htout = [System.IO.StreamWriter]::new($context.Response.OutputStream)
         #$htout = $context.Response.OutputStream
-        $htout.WriteLine("YOU DONE MESSED UP, A-A-RON:")
+        $htout.WriteLine("YOU DONE MESSED UP, A-A-RON (There was an error handling a proxied request/response):")
         $htout.WriteLine($_.Exception.Message)
         $htout.WriteLine($($_ | ConvertTo-Json -Depth 3))
         $htout.Flush()
@@ -315,7 +315,7 @@ finally {
 
     Write-Host 'Waiting for all jobs to finish...'
 
-    Get-Job | Receive-Job -Wait -AutoRemoveJob -ErrorAction SilentlyContinue
+    Get-Job | Receive-Job -Wait -AutoRemoveJob -Force
 
     Write-Host 'Done.'
 }

@@ -37,7 +37,7 @@ authentication to a sharepoint server seemlessly for a tool that does not
 support authentication. Eventual goal is to also have this set up as an inline
 transparent proxy that handles caching too.
 
-TODO: figure out how to bind to non localhost without admin access on a non privileged port. This is the error:
+TODO: figure out how to bind to non localhost without admin access on a non privileged port.
 
 #>
 
@@ -168,6 +168,18 @@ $proxyRequest = {
         $destinationPort = $request.Url.Port
         $connectionScheme = $request.Url.Scheme
 
+        if ($context.Request.IsLocal -eq $true) {
+            Write-Error "Request is local, not proxying."
+            $response.StatusCode = 200
+            $response.StatusDescription = "OK"
+            $response.ContentLength64 = 0
+            $response.ContentType = "text/html"
+            $htout = [System.IO.StreamWriter]::new($context.Response.OutputStream)
+            $htout.Flush()
+            $response.Close()
+            return
+        }
+
         Write-Error "Proxying to $destinationHost on port $destinationPort using $connectionScheme"
         Write-Output "Destination host: $destinationHost"
         Write-Output "Destination port: $destinationPort"
@@ -220,9 +232,12 @@ $proxyRequest = {
         #$htout = $context.Response.OutputStream
         $htout.WriteLine("YOU DONE MESSED UP, A-A-RON (There was an error handling a proxied request/response):")
         $htout.WriteLine($_.Exception.Message)
-        $htout.WriteLine($($_ | ConvertTo-Json -Depth 3))
+        $htout.WriteLine($($_ | ConvertTo-Json -Depth 1))
         $htout.Flush()
         $context.Response.StatusCode = 500
+        $context.Response.Close()
+    }
+    finally {
         $context.Response.Close()
     }
 
@@ -298,7 +313,7 @@ try {
 }
 finally {
     Write-Host -BackgroundColor Magenta "The proxy server shall now stop, close, and dispose!"
-    Write-Host ''
+    [Console]::ResetColor()
 
     # Stop the listener when done
     if($null -ne $listener) {
@@ -314,6 +329,13 @@ finally {
     }
 
     Write-Host 'Waiting for all jobs to finish...'
+
+    Get-Job | Wait-Job -TimeoutSec 5
+
+    if (-not $?) {
+        Write-Host -BackgroundColor Red 'Some jobs did not finish in time! Forcing jobs stopped...'
+        Get-Job | Remove-Job -Force
+    }
 
     Get-Job | Receive-Job -Wait -AutoRemoveJob -Force
 

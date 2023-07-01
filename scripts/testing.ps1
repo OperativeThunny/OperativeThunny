@@ -9,26 +9,26 @@ function New-ScriptBlockCallback
 
     # Is this type already defined?
     if (-not ( 'CallbackEventBridge' -as [type])) {
-        Add-Type @' 
-        using System; 
+        Add-Type @'
+        using System;
 
-        public sealed class CallbackEventBridge { 
-            public event AsyncCallback CallbackComplete = delegate { }; 
+        public sealed class CallbackEventBridge {
+            public event AsyncCallback CallbackComplete = delegate { };
 
-            private CallbackEventBridge() {} 
+            private CallbackEventBridge() {}
 
-            private void CallbackInternal(IAsyncResult result) { 
-                CallbackComplete(result); 
-            } 
+            private void CallbackInternal(IAsyncResult result) {
+                CallbackComplete(result);
+            }
 
-            public AsyncCallback Callback { 
-                get { return new AsyncCallback(CallbackInternal); } 
-            } 
+            public AsyncCallback Callback {
+                get { return new AsyncCallback(CallbackInternal); }
+            }
 
-            public static CallbackEventBridge Create() { 
-                return new CallbackEventBridge(); 
-            } 
-        } 
+            public static CallbackEventBridge Create() {
+                return new CallbackEventBridge();
+            }
+        }
 '@
     }
     $bridge = [callbackeventbridge]::create()
@@ -37,7 +37,7 @@ function New-ScriptBlockCallback
 }
 
 $listener = New-Object System.Net.HttpListener
-$listener.Prefixes.Add('http://+:8080/') 
+$listener.Prefixes.Add('http://+:8080/')
 $listener.Start()
 Write-host 'Listening'
 
@@ -53,14 +53,14 @@ $requestListener = {
     $request = $context.Request
     $response = $context.Response
 
-    if ($request.Url -match '/timeout$') 
+    if ($request.Url -match '/timeout$')
     {
         $timeout = 10
         sleep $timeout
         $message = "Timeout $timeout`n`n $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')`n`n)"
         $response.ContentType = 'text/html'
     }
-    else 
+    else
     {
         #fast response without timeout
         $message = "no timeout $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')`n";
@@ -73,7 +73,7 @@ $requestListener = {
     $output.Write($buffer, 0, $buffer.length)
     $output.Close()
 
-}  
+}
 
 $context = $listener.BeginGetContext((New-ScriptBlockCallback -Callback $requestListener), $listener)
 
@@ -86,3 +86,14 @@ while ($listener.IsListening)
 
 $listener.Close()
 Write-host 'Terminating ...'
+
+
+
+# https://stackoverflow.com/questions/10623907/null-coalescing-in-powershell`
+function Coalesce($a, $b) { if ($null -ne $a) { $a } else { $b } }
+function IfNull($a, $b, $c) { if ($null -eq $a) { $b } else { $c } }
+function IfTrue($a, $b, $c) { if ($a) { $b } else { $c } }
+New-Alias "??" Coalesce
+New-Alias "?:" IfTrue
+
+

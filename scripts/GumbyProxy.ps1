@@ -21,7 +21,7 @@ It is named after Gumby, the flexible clay character from the 1950s children's
 television show The Howdy Doody Show, and also named after the Monty Python
 sketch Gumby Brain Specialist.
 
-License: All rights reserved. This code is not licensed for use by anyone other than the author.
+License: All rights reserved. This code is not licensed for use by anyone other than the author at this time.
 Copyright: OperativeThunny (C) 2023.
 
 Interesting reference material:
@@ -30,6 +30,7 @@ Interesting reference material:
     https://blog.ironmansoftware.com/powershell-async-method/
     https://gist.github.com/aconn21/946c702cfcc08d10e1c0984535765ae3
     https://www.b-blog.info/en/it-eng/implement-multi-threading-with-net-runspaces-in-powershell
+    https://drakelambert.dev/2021/09/Quick-HTTP-Listener-in-PowerShell.html
 
 
 $ This is a web proxy script, it will eventually be a proxy to handle windows
@@ -51,12 +52,6 @@ if (-not (Get-Command -Name Start-ThreadJob -ErrorAction SilentlyContinue)) {
     Write-Error "Also check out this sick github repo: https://github.com/PowerShell/ThreadJob"
     exit
 }
-
-# Create the runspace pool with the desired number of threads
-# $minThreads = 1
-# $maxThreads = 10
-# $runspacePool = [runspacefactory]::CreateRunspacePool($minThreads, $maxThreads)
-# $runspacePool.Open()
 
 # https://blog.ironmansoftware.com/powershell-async-method/
 # The below function and alias can be defined to simplify calling and awaiting async
@@ -89,7 +84,19 @@ Set-Alias -Name await -Value Wait-Task -Force
 
 
 
-
+<#
+.DESCRIPTION
+    Script block to handle an incoming http request. This scriptblock will be invoked by the Start-ThreadJob cmdlet.
+    This scriptblock will invoke the handlers scriptblocks that are passed to it, and will return the result of the first handler to return a non null value.
+    Provides a testing handler.
+.PARAMETER $context
+    The HttpListenerContext object that contains the request and response objects.
+.PARAMETER $handlers
+    An array of scriptblocks that will be invoked with the $context object as the only parameter.
+    The scriptblocks should return $null if they did not handle the request, or a string if they did.
+    The first handler to return a non null value will be the last handler to be invoked.
+    The handlers will be invoked in the order they are specified in the array.
+#>
 $handleIndividualRequest = {
     [cmdletbinding()]
     param(
@@ -97,24 +104,13 @@ $handleIndividualRequest = {
         [scriptblock[]]$handlers
     )
 
-    $dispatcherAdjudicationValue = $context.Request.Headers.Get("Testing123123")
+    $dispatcherAdjudicationValue = $context.Request.Headers.Get("test")
 
     if ($null -ne $dispatcherAdjudicationValue -and $dispatcherAdjudicationValue -eq "true") {
-        <#
-https://drakelambert.dev/2021/09/Quick-HTTP-Listener-in-PowerShell.html
-$context.Response.StatusCode = 200
-$context.Response.ContentType = 'application/json'
-
-$responseJson = '{"big": "test"}'
-$responseBytes = [System.Text.Encoding]::UTF8.GetBytes($responseJson)
-$context.Response.OutputStream.Write($responseBytes, 0, $responseBytes.Length)
-
-$context.Response.Close() # end the response
-#>
         Write-Output "Handling testing request."
         # Return a simple testing html5 page with a css animation:
         $html = Get-Content "TestingHTML.html"
-        $html = $html -join "`n"
+        $html = $html -join "`n" # The Get-Content cmdlet does not return a string, it returns an array of strings, so we need to join them together.
         $response = $context.Response
         $response.StatusCode = 200
         $response.StatusDescription = "OK"
@@ -132,23 +128,41 @@ $context.Response.Close() # end the response
     Write-Output "Sending the context to all the handlers until one returns a value."
     $continueHandling = $null
     foreach ($handler in $handlers) {
-        #$continueHandling = $handler.Invoke($context)
         $continueHandling = $(Invoke-Command $handler -ArgumentList $context)
-        Write-Error "Successfully finished handling the jiggling of the bits."
         if ($null -ne $continueHandling) {
             return $continueHandling
         }
     }
 
-    $context.Response.StatusCode = 501
-    $context.Response.StatusDescription = "Not Implemented"
-    $htout = [System.IO.StreamWriter]::new($context.Response.OutputStream)
-    $htout.WriteLine("No handler function indicated that they handled the request by returning a non null value.")
-    $htout.Flush()
-    $context.Response.Close()
+    if ($context.Response.IsClosed) {
+        Write-Error "The response was closed by a handler, so we are done."
+        return "The response was closed by a handler, so we are done."
+    }
+
+    try {
+        $context.Response.StatusCode = 501
+        $context.Response.StatusDescription = "Not Implemented"
+        $htout = [System.IO.StreamWriter]::new($context.Response.OutputStream)
+        $htout.WriteLine("No handler function indicated that they handled the request by returning a non null value.")
+        $htout.Flush()
+        $context.Response.Close()
+    } catch {
+        Write-Error "Failed to close the response with an indicator of non implementation of handler for request."
+    } finally {
+        Write-Output "Done with this request."
+    }
 }
 
-# Create a script block for processing each request
+# TODO: Can this work as a function instead of a script block?
+<#
+.DESCRIPTION
+    A script block that handles an incoming HTTP request and proxies it to a destination server assumining it is not to localhost.
+.PARAMETER context
+    The HttpListenerContext object that represents the request to be handled.
+.OUTPUTS
+    A string indicating the result of the request handling. Return $null to indicate that the request was not handled.
+    A null return value will cause the next handler to be called. Do **NOT** return $null if you call close/dispose on the context, or response objects.
+#>
 $proxyRequest = {
     [cmdletbinding()]
     param(
@@ -161,6 +175,7 @@ $proxyRequest = {
     try {
         $request = $context.Request
         $response = $context.Response
+        # TODO: figure out how to be an actual http proxy or https proxy that can be used in browser settings, and figure out SOCKS5 proxying too.
         # Get the original destination host and port
         # TODO: Do more parsing to be able to handle any port and proto (tls) etc...
         # here and where the webrequest is created to the destination server:
@@ -168,18 +183,20 @@ $proxyRequest = {
         $destinationPort = $request.Url.Port
         $connectionScheme = $request.Url.Scheme
 
-        if ($context.Request.IsLocal -eq $true) {
-            Write-Error "Request is local, not proxying."
+        if ($context.Request.IsLocal -eq $true -or $destinationHost -eq "localhost" -or $destinationHost -eq "127.0.0.1") {
+            Write-Error "Request is local not proxying."
             $response.StatusCode = 200
             $response.StatusDescription = "OK"
-            $response.ContentLength64 = 0
+            #$response.ContentLength64 = 0 # If we don't set the content length manually, the it gets magiced or something?
             $response.ContentType = "text/html"
             $htout = [System.IO.StreamWriter]::new($context.Response.OutputStream)
+            $htout.WriteLine("Ignoring local request.")
             $htout.Flush()
             $response.Close()
-            return
+            return "Local request not proxying."
         }
 
+        # TODO: Trim down this debugging information:
         Write-Error "Proxying to $destinationHost on port $destinationPort using $connectionScheme"
         Write-Output "Destination host: $destinationHost"
         Write-Output "Destination port: $destinationPort"
@@ -194,6 +211,7 @@ $proxyRequest = {
         # Create a new HTTP request to the original destination
         $proxyRequest = [WebRequest]::Create("$($connectionScheme)://$($destinationHost):$($destinationPort)$($context.Request.Url.PathAndQuery)")
         # Don't use WebRequest or its derived classes for new development. Instead, use the System.Net.Http.HttpClient class.
+        # TODO: Replace WebRequest with HttpClient.
         # See https://learn.microsoft.com/en-us/dotnet/api/system.net.webrequest?view=net-7.0
         #$client = [System.Net.Http.HttpClient]::new()
 
@@ -249,47 +267,19 @@ $proxyRequest = {
 }
 
 
-
-
-
-# $dispatchHandlingThread = {
-#     [cmdletbinding()]
-#     param($result)
-#     Write-Host "Dispatching a handling thread!"
-
-#     if ($null -eq $result -or $null -eq $result.AsyncState) {
-#         Write-Error -BackgroundColor Red "Unable to dispatch a handling thread because the result or result.AsyncState is null!"
-#         throw "Unable to dispatch a handling thread because the result or result.AsyncState is null!"
-#         exit
-#     }
-
-#     [System.Net.HttpListener]$listener = $result.AsyncState;
-#     $context = $listener.EndGetContext($result.listnerResult);
-#     $request = $context.Request
-#     $response = $context.Response
-
-#     Write-Host "We are at start thread!"
-
-#     Start-ThreadJob -ScriptBlock $processRequestScript -ArgumentList $listener, $context, $request, $response
-#     Start-Sleep -Seconds 1
-#     $response.OutputStream.Close()
-# }
-
-
-# https://stackoverflow.com/questions/10623907/null-coalescing-in-powershell`
-function Coalesce($a, $b) { if ($null -ne $a) { $a } else { $b } }
-function IfNull($a, $b, $c) { if ($null -eq $a) { $b } else { $c } }
-function IfTrue($a, $b, $c) { if ($a) { $b } else { $c } }
-New-Alias "??" Coalesce
-New-Alias "?:" IfTrue
-
-
 try {
     # Create an HTTP listener and start it
     $listener = [HttpListener]::new()
     # TODO: Prefixes and SSL certs should be configurable from the command line.
     $listener.Prefixes.Add("http://127.0.0.1:8080/")
     $listener.Prefixes.Add("http://localhost:8080/")
+    [HttpListenerTimeoutManager]$timeoutManager = $listener.TimeoutManager
+    $timeoutManager.DrainEntityBody = [System.TimeSpan]::FromSeconds(120)
+    $timeoutManager.EntityBody = [System.TimeSpan]::FromSeconds(10)
+    $timeoutManager.HeaderWait = [System.TimeSpan]::FromSeconds(5)
+    $timeoutManager.IdleConnection = [System.TimeSpan]::FromSeconds(5)
+    $timeoutManager.MinSendBytesPerSecond = [Int64]150
+    $timeoutManager.RequestQueue = [System.TimeSpan]::FromSeconds(5)
     $listener.Start()
 
     Write-Host "Proxy server started. Listening on $($listener.Prefixes -join ', ')"
@@ -299,6 +289,7 @@ try {
         # Dispatch a thread to handle the request
         # TODO: Figure out how to set the jobs to automatically output stdout to console and close and remove on their own or have the get job receive job be done asynch, maybe even in another job??
         Write-Host -BackgroundColor Green "Waiting for connection..."
+        # TODO: There is a bug that when the script first starts the first two http requests have to come in slowly, or else for some reason it breaks. If a couple requests come in with a minimum time delta of .25 seconds things seem to work, then after that if I change the testing script to have no sleeps in it, then the script works appropriatly.
         (Start-ThreadJob -ScriptBlock $handleIndividualRequest -ArgumentList $(await ($listener.GetContextAsync())), @($proxyRequest) ) | Out-Null
 
         # Get output and remove jobs that have finished executing (hopefully not the one we just started):
@@ -328,16 +319,14 @@ finally {
         $runspacePool.Dispose()
     }
 
-    Write-Host 'Waiting for all jobs to finish...'
+    $jobs = Get-Job
 
-    Get-Job | Wait-Job -TimeoutSec 5
+    Write-Host 'Removing any leftover background handlers...'
 
-    if (-not $?) {
-        Write-Host -BackgroundColor Red 'Some jobs did not finish in time! Forcing jobs stopped...'
-        Get-Job | Remove-Job -Force
+    $jobs | ForEach-Object {
+        Write-Host 'Removing jorb $($_)... '
+        Remove-Job -Force -Job $_
     }
-
-    Get-Job | Receive-Job -Wait -AutoRemoveJob -Force
 
     Write-Host 'Done.'
 }

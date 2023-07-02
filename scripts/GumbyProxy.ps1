@@ -75,7 +75,7 @@ function Wait-Task {
     }
 
     End {
-        # VERY IMPORTANT: This used to be set to 200 milliseconds, but if many http requests were coming in fast enough, it would cause the script to hang. Lowering this seemed to hide what I presume is a race condition **somewhere** that I have not yet figured out, I suspect its some sort of race condition in the .net layer dealing with the async tasks for the httplistener class, but I have no idea.
+        # VERY IMPORTANT: This used to be set to 200 milliseconds, but if many http requests were coming in fast enough, it would cause the script to hang. Lowering this seemed to __hide__ what I presume is a race condition **somewhere** that I have not yet figured out, I suspect its some sort of race condition in the .net layer dealing with the async tasks for the httplistener class, but I have no idea.
         While (-not [System.Threading.Tasks.Task]::WaitAll($Tasks, 10)) {}
         $Tasks.ForEach( { $_.GetAwaiter().GetResult() })
     }
@@ -124,8 +124,7 @@ $handleIndividualRequest = {
         return "Test concluded."
     }
 
-    # TODO: special header required to proxy?
-    # TODO: How do real http proxies handle this?
+    # HTTP proxy request looks like full hostname in the GET or other METHOD line
     Write-Output "Sending the context to all the handlers until one returns a value."
     $continueHandling = $null
     foreach ($handler in $handlers) {
@@ -211,7 +210,8 @@ $proxyRequest = {
             The destination host is: $destinationHost`
             The destination port is: $destinationPort`
             The connection scheme is: $connectionScheme`
-            Path and query: $($context.Request.Url.PathAndQuery)`n"
+            Path and query: $($context.Request.Url.PathAndQuery)`
+            JsonHeaders: $(ConvertTo-Json -Depth 3 $request.Headers)`n"
         Write-Output $msg
 
         #if ($context.Request.IsLocal -eq $true -or $destinationHost -eq "localhost" -or $destinationHost -eq "127.0.0.1") {
@@ -230,17 +230,6 @@ $proxyRequest = {
             return "Local request not proxying."
         }
 
-        # Write-Error "Proxying to $destinationHost on port $destinationPort using $connectionScheme"
-        # Write-Output "Destination host: $destinationHost"
-        # Write-Output "Destination port: $destinationPort"
-        # Write-Output "Connection scheme: $connectionScheme"
-        # Write-Output "Request method: $($request.HttpMethod)"
-        # Write-Output "Request content type: $($request.ContentType)"
-        # Write-Output "Request headers: $($request.Headers)"
-        # Write-Output "Request url: $($request.Url)"
-        # Write-Output "Request url path and query: $($request.Url.PathAndQuery)"
-        # Write-Output "Request url absolute path: $($request.Url.AbsolutePath)"
-        # Write-Output "Request url absolute uri: $($request.Url.AbsoluteUri)"
         # Create a new HTTP request to the original destination
         $proxyRequest = [WebRequest]::Create("$($connectionScheme)://$($destinationHost):$($destinationPort)$($context.Request.Url.PathAndQuery)")
         # Don't use WebRequest or its derived classes for new development. Instead, use the System.Net.Http.HttpClient class.
@@ -306,8 +295,10 @@ try {
     $listener = [HttpListener]::new()
     # TODO: Prefixes and SSL certs should be configurable from the command line.
     # $listener.Prefixes.Add("http://127.0.0.1:8080/")
-    # $listener.Prefixes.Add("http://localhost:8080/")
-    $listener.Prefixes.Add("http://*:8080/")
+    # $listener.Prefixes.Add("http://localhost:8080/") # This will need to be used for the windows use case, and it will need to be added to the hosts file for domains to proxy.
+    $listener.Prefixes.Add("http://*:8080/") # This makes the script work for explicit proxy use on linux, but it does not work on Windows without admin privileges.
+    #$listener.Prefixes.Add("http://0.0.0.0:8080/") # This does not work it explodes idk why.
+
     [HttpListenerTimeoutManager]$timeoutManager = $listener.TimeoutManager
     $timeoutManager.DrainEntityBody = [System.TimeSpan]::FromSeconds(120)
     #$timeoutManager.EntityBody = [System.TimeSpan]::FromSeconds(10) # Not supported on linux.
@@ -315,6 +306,7 @@ try {
     $timeoutManager.IdleConnection = [System.TimeSpan]::FromSeconds(5)
     #$timeoutManager.MinSendBytesPerSecond = [Int64]150 # Not supported on linux.
     #$timeoutManager.RequestQueue = [System.TimeSpan]::FromSeconds(5) # Not supported on linux.
+
     $listener.Start()
 
     Write-Host "Proxy server started. Listening on $($listener.Prefixes -join ', ')"

@@ -75,6 +75,7 @@ function Wait-Task {
     }
 
     End {
+        # VERY IMPORTANT: This used to be set to 200 milliseconds, but if many http requests were coming in fast enough, it would cause the script to hang. Lowering this seemed to hide what I presume is a race condition **somewhere** that I have not yet figured out, I suspect its some sort of race condition in the .net layer dealing with the async tasks for the httplistener class, but I have no idea.
         While (-not [System.Threading.Tasks.Task]::WaitAll($Tasks, 10)) {}
         $Tasks.ForEach( { $_.GetAwaiter().GetResult() })
     }

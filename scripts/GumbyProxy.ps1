@@ -317,6 +317,7 @@ try {
         # TODO: Figure out how to set the jobs to automatically output stdout to console and close and remove on their own or have the get job receive job be done asynch, maybe even in another job??
         Write-Host -BackgroundColor Green "Waiting for connection..."
         # TODO: There is a bug that when the script first starts the first two http requests have to come in slowly, or else for some reason it breaks. If a couple requests come in with a minimum time delta of .25 seconds things seem to work, then after that if I change the testing script to have no sleeps in it, then the script works appropriatly.
+        # TODO: Handle the possibility of a filesystem race condition if two requests for the same URL come in fast and the cache does not already exist, that will have to be handled before spawning a thread to handle the request.
         (Start-ThreadJob -ScriptBlock $handleIndividualRequest -ArgumentList $(await ($listener.GetContextAsync())), @($proxyRequest) ) | Out-Null
 
         # Get output and remove jobs that have finished executing (hopefully not the one we just started):

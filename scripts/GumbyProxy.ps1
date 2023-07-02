@@ -53,6 +53,8 @@ if (-not (Get-Command -Name Start-ThreadJob -ErrorAction SilentlyContinue)) {
     exit
 }
 
+$CACHE_DIR = "./cache"
+
 # https://blog.ironmansoftware.com/powershell-async-method/
 # The below function and alias can be defined to simplify calling and awaiting async
 # methods in PowerShell. The Wait-Task function accepts one or more Task objects and
@@ -183,27 +185,62 @@ $proxyRequest = {
             Write-Output "Handling a CONNECT request, expectedly a deliberate proxy request."
             # Retrieve the destination host and port from the CONNECT request.
 # TODO: this.
+return $false
             $destinationHost = $request.Url.Host
             $destinationPort = $request.Url.Port
             $connectionScheme = $request.Url.Scheme
         } else {
-            Write-Output "Handling an expectedly transparently proxied request."
+            Write-Output "Handling a direct or proxied request."
             # TODO: Do we need to handle a non proxied request differently, like if it starts with a / instead of a http://host/ ?
-
-            # get cryptographic hash of host and url to use as a key for the cache.
-
-            $dp = [System.Uri]::new($request.RawUrl)
-            #$destinationHost = $dp.Host # TODO: what do we use here?
+            $RawUrlParsed = [System.Uri]::new($request.RawUrl)
             $destinationHost = $request.Headers["Host"]
-            $destinationPort = $dp.Port
-            $connectionScheme = $dp.Scheme
-            #$destinationPort = $request.Url.Port
-            #$connectionScheme = $request.Url.Scheme
+            $destinationPort = $RawUrlParsed.Port
+            $connectionScheme = $RawUrlParsed.Scheme
+
+            if ($true -and $RawUrlParsed.Host -ne $destinationHost) {
+                Write-Output "The host header and the host in the url do not match. '$($RawUrlParsed.Host)' != '$($destinationHost) != $($RawUrlParsed)' `
+                This is probably a direct request, so use the host header and the url path and query to make the request to the destination server, if it is not localhost."
+                $destinationPort = 80
+                $connectionScheme = "http"
+                # $destinationPort = $destinationHost.Substring($destinationHost.IndexOf(":") + 1)
+                # $destinationHost = $destinationHost.Substring(0, $destinationHost.IndexOf(":"))
+
+                if ($destinationHost.IndexOf(":") -gt 0) {
+                    try {
+                        $hostParsed = [System.Uri]::new("$($destinationHost)")
+                        $destinationPort = $hostParsed.Port
+                        $destinationHost = $hostParsed.Host
+                        $connectionScheme = $hostParsed.Scheme
+                    } catch {
+                        Write-Error "Failed to parse the host header as a URI. The host header is: '$($destinationHost)'"
+                    }
+                }
+
+                Write-Output "The host parsed is: $($hostParsed)"
+            }
         }
 
+        # get hash of host and url to use as a key for the cache directory.
         $hasher = [System.Security.Cryptography.SHA256]::Create() # TODO: make this a singleton object to avoid the overhead of creating it for every request.
         $rawhash = $hasher.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($request.RawUrl))
         $hash = $([System.BitConverter]::ToString($rawhash).Replace("-", '').ToLower())
+        $hashPrefix = $hash.Substring(0, 2)
+
+        $cacheRoot = $Global:CACHE_DIR
+        # TODO: Handle race condition possibilities here for creating the cache directory and file, possibly using some sort of promise if promises are in powershell?
+        $cacheDir = "$($cacheRoot)/$($hashPrefix)"
+        $cacheFile = "$($cacheDir)/$($hash)"
+
+        if (-not (Test-Path -Path $cacheDir)) {
+            Write-Output "Creating cache directory: $cacheDir"
+            New-Item -Path $cacheDir -ItemType Directory | Out-Null
+        }
+
+        if (-not (Test-Path -Path $cacheFile)) {
+            Write-Output "Creating cache file: $cacheFile"
+            New-Item -Path $cacheFile -ItemType File | Out-Null
+        }
+
 
         $msg = "Ignoring local request. The requested URL is: $($request.RawUrl)`
             The hash of the URL is: $hash`
@@ -211,16 +248,17 @@ $proxyRequest = {
             The destination port is: $destinationPort`
             The connection scheme is: $connectionScheme`
             Path and query: $($context.Request.Url.PathAndQuery)`
-            JsonHeaders: $(ConvertTo-Json -Depth 3 $request.Headers)`n"
+            Header keys: $(ConvertTo-Json -Depth 3 $request.Headers.Keys)`
+            Header values: $(ConvertTo-Json -Depth 10 $request.Headers)`n"
         Write-Output $msg
-
+return $false
         #if ($context.Request.IsLocal -eq $true -or $destinationHost -eq "localhost" -or $destinationHost -eq "127.0.0.1") {
         if ($destinationHost -eq "localhost" -or $destinationHost -eq "127.0.0.1") {
             #Write-Error "Request is local, not proxying."
             $responseBytes = [System.Text.Encoding]::UTF8.GetBytes($msg)
             $response.StatusCode = 200
             $response.StatusDescription = "OK"
-            $response.ContentLength64 = $responseBytes.Length # If we don't set the content length manually, the it gets magiced or something?
+            $response.ContentLength64 = $responseBytes.Length # If we don't set the content length manually, then it gets automatically set or something?
             $response.ContentType = "text/html"
             $response.OutputStream.Write($responseBytes, 0, $responseBytes.Length)
             # $htout = [System.IO.StreamWriter]::new($context.Response.OutputStream)

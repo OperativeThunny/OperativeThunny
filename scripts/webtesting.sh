@@ -12,9 +12,9 @@ error_handler() {
 trap 'error_handler $LINENO $? $0' ERR
 
 while true; do
-	for i in {1..40}; do
+	for i in {1..4}; do
 		curl "http://localhost:8080/test$i?param$i=val$i" &
-		#sleep .254
+		sleep .254
 	done
 	wait
 	sleep 1

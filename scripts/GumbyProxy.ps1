@@ -75,7 +75,7 @@ function Wait-Task {
     }
 
     End {
-        While (-not [System.Threading.Tasks.Task]::WaitAll($Tasks, 200)) {}
+        While (-not [System.Threading.Tasks.Task]::WaitAll($Tasks, 10)) {}
         $Tasks.ForEach( { $_.GetAwaiter().GetResult() })
     }
 }
@@ -169,8 +169,8 @@ $proxyRequest = {
         [System.Net.HttpListenerContext]$context
     )
 
-    Write-Error "Handling an incoming HTTP request!"
-    Write-Error $context.Request.Url
+    #Write-Error "Handling an incoming HTTP request!"
+    #Write-Error $context.Request.Url
 
     try {
         $request = $context.Request
@@ -179,35 +179,67 @@ $proxyRequest = {
         # Get the original destination host and port
         # TODO: Do more parsing to be able to handle any port and proto (tls) etc...
         # here and where the webrequest is created to the destination server:
-        $destinationHost = $request.Headers["Host"]
-        $destinationPort = $request.Url.Port
-        $connectionScheme = $request.Url.Scheme
+        if ($request.HttpMethod -eq "CONNECT") {
+            Write-Output "Handling a CONNECT request, expectedly a deliberate proxy request."
+            # Retrieve the destination host and port from the CONNECT request.
+# TODO: this.
+            $destinationHost = $request.Url.Host
+            $destinationPort = $request.Url.Port
+            $connectionScheme = $request.Url.Scheme
+        } else {
+            Write-Output "Handling an expectedly transparently proxied request."
+            # TODO: Do we need to handle a non proxied request differently, like if it starts with a / instead of a http://host/ ?
 
-        if ($context.Request.IsLocal -eq $true -or $destinationHost -eq "localhost" -or $destinationHost -eq "127.0.0.1") {
-            Write-Error "Request is local not proxying."
+            # get cryptographic hash of host and url to use as a key for the cache.
+
+            $dp = [System.Uri]::new($request.RawUrl)
+            #$destinationHost = $dp.Host # TODO: what do we use here?
+            $destinationHost = $request.Headers["Host"]
+            $destinationPort = $dp.Port
+            $connectionScheme = $dp.Scheme
+            #$destinationPort = $request.Url.Port
+            #$connectionScheme = $request.Url.Scheme
+        }
+
+        $hasher = [System.Security.Cryptography.SHA256]::Create() # TODO: make this a singleton object to avoid the overhead of creating it for every request.
+        $rawhash = $hasher.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($request.RawUrl))
+        $hash = $([System.BitConverter]::ToString($rawhash).Replace("-", '').ToLower())
+
+        $msg = "Ignoring local request. The requested URL is: $($request.RawUrl)`
+            The hash of the URL is: $hash`
+            The destination host is: $destinationHost`
+            The destination port is: $destinationPort`
+            The connection scheme is: $connectionScheme`
+            Path and query: $($context.Request.Url.PathAndQuery)`n"
+        Write-Output $msg
+
+        #if ($context.Request.IsLocal -eq $true -or $destinationHost -eq "localhost" -or $destinationHost -eq "127.0.0.1") {
+        if ($destinationHost -eq "localhost" -or $destinationHost -eq "127.0.0.1") {
+            #Write-Error "Request is local, not proxying."
+            $responseBytes = [System.Text.Encoding]::UTF8.GetBytes($msg)
             $response.StatusCode = 200
             $response.StatusDescription = "OK"
-            #$response.ContentLength64 = 0 # If we don't set the content length manually, the it gets magiced or something?
+            $response.ContentLength64 = $responseBytes.Length # If we don't set the content length manually, the it gets magiced or something?
             $response.ContentType = "text/html"
-            $htout = [System.IO.StreamWriter]::new($context.Response.OutputStream)
-            $htout.WriteLine("Ignoring local request.")
-            $htout.Flush()
+            $response.OutputStream.Write($responseBytes, 0, $responseBytes.Length)
+            # $htout = [System.IO.StreamWriter]::new($context.Response.OutputStream)
+            # $htout.WriteLine("Ignoring local request. The requested URL is: $($request.Url))")
+            # $htout.Flush()
             $response.Close()
             return "Local request not proxying."
         }
 
-        # TODO: Trim down this debugging information:
-        Write-Error "Proxying to $destinationHost on port $destinationPort using $connectionScheme"
-        Write-Output "Destination host: $destinationHost"
-        Write-Output "Destination port: $destinationPort"
-        Write-Output "Connection scheme: $connectionScheme"
-        Write-Output "Request method: $($request.HttpMethod)"
-        Write-Output "Request content type: $($request.ContentType)"
-        Write-Output "Request headers: $($request.Headers)"
-        Write-Output "Request url: $($request.Url)"
-        Write-Output "Request url path and query: $($request.Url.PathAndQuery)"
-        Write-Output "Request url absolute path: $($request.Url.AbsolutePath)"
-        Write-Output "Request url absolute uri: $($request.Url.AbsoluteUri)"
+        # Write-Error "Proxying to $destinationHost on port $destinationPort using $connectionScheme"
+        # Write-Output "Destination host: $destinationHost"
+        # Write-Output "Destination port: $destinationPort"
+        # Write-Output "Connection scheme: $connectionScheme"
+        # Write-Output "Request method: $($request.HttpMethod)"
+        # Write-Output "Request content type: $($request.ContentType)"
+        # Write-Output "Request headers: $($request.Headers)"
+        # Write-Output "Request url: $($request.Url)"
+        # Write-Output "Request url path and query: $($request.Url.PathAndQuery)"
+        # Write-Output "Request url absolute path: $($request.Url.AbsolutePath)"
+        # Write-Output "Request url absolute uri: $($request.Url.AbsoluteUri)"
         # Create a new HTTP request to the original destination
         $proxyRequest = [WebRequest]::Create("$($connectionScheme)://$($destinationHost):$($destinationPort)$($context.Request.Url.PathAndQuery)")
         # Don't use WebRequest or its derived classes for new development. Instead, use the System.Net.Http.HttpClient class.
@@ -267,19 +299,21 @@ $proxyRequest = {
 }
 
 
+
 try {
     # Create an HTTP listener and start it
     $listener = [HttpListener]::new()
     # TODO: Prefixes and SSL certs should be configurable from the command line.
-    $listener.Prefixes.Add("http://127.0.0.1:8080/")
-    $listener.Prefixes.Add("http://localhost:8080/")
+    # $listener.Prefixes.Add("http://127.0.0.1:8080/")
+    # $listener.Prefixes.Add("http://localhost:8080/")
+    $listener.Prefixes.Add("http://*:8080/")
     [HttpListenerTimeoutManager]$timeoutManager = $listener.TimeoutManager
     $timeoutManager.DrainEntityBody = [System.TimeSpan]::FromSeconds(120)
-    $timeoutManager.EntityBody = [System.TimeSpan]::FromSeconds(10)
-    $timeoutManager.HeaderWait = [System.TimeSpan]::FromSeconds(5)
+    #$timeoutManager.EntityBody = [System.TimeSpan]::FromSeconds(10) # Not supported on linux.
+    #$timeoutManager.HeaderWait = [System.TimeSpan]::FromSeconds(5) # Not supported on linux.
     $timeoutManager.IdleConnection = [System.TimeSpan]::FromSeconds(5)
-    $timeoutManager.MinSendBytesPerSecond = [Int64]150
-    $timeoutManager.RequestQueue = [System.TimeSpan]::FromSeconds(5)
+    #$timeoutManager.MinSendBytesPerSecond = [Int64]150 # Not supported on linux.
+    #$timeoutManager.RequestQueue = [System.TimeSpan]::FromSeconds(5) # Not supported on linux.
     $listener.Start()
 
     Write-Host "Proxy server started. Listening on $($listener.Prefixes -join ', ')"
@@ -324,7 +358,7 @@ finally {
     Write-Host 'Removing any leftover background handlers...'
 
     $jobs | ForEach-Object {
-        Write-Host 'Removing jorb $($_)... '
+        Write-Host "Removing jorb $($_.Id)... "
         Remove-Job -Force -Job $_
     }
 

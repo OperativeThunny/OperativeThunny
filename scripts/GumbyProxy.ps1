@@ -259,6 +259,8 @@ write-output $destinationHost
             $responseStream.CopyTo($response.OutputStream)
             $responseStream.Close()
             $context.Response.Close()
+
+            # TODO: If the cache is older than X {time unit} then go ahead and grab the content from the server and update the cache file after we have already returned the cached content to the client.
             return $true
         }
 

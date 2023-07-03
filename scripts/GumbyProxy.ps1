@@ -204,18 +204,10 @@ return $false
                 $destinationPort = 80
                 $connectionScheme = "http"
 
-write-output $destinationHost
                 if ($destinationHost.IndexOf(":") -gt 0) {
                     try {
-                        # TODO: enforce scheme being present via multiple colons, if it is nly one colon then we only have a hostname and port number.
-                        #$hostParsed = [System.Uri]::new("$($destinationHost)")
-                        #$destinationPort = $hostParsed.Port
-                        #$destinationPort = $request.Url.Port
-                        #$destinationHost = $hostParsed.Host
-                        #$destinationHost = $request.Url.Host
                         $destinationPort = $destinationHost.Substring($destinationHost.IndexOf(":") + 1)
                         $destinationHost = $destinationHost.Substring(0, $destinationHost.IndexOf(":"))
-                        #$connectionScheme = $hostParsed.Scheme
                         $connectionScheme = $request.Url.Scheme
                     } catch {
                         Write-Error "Failed to parse the host header as a URI. The host header is: '$($destinationHost)'"
@@ -224,6 +216,11 @@ write-output $destinationHost
 
                 Write-Output "The host parsed is: $($hostParsed)"
             }
+        }
+# TODO: function for special case corrections goes here
+        if ($destinationHost -eq "i.imgur.com") {
+            $destinationPort = 443
+            $connectionScheme = "https"
         }
 
         $FinalDestination = "$($connectionScheme)://$($destinationHost):$($destinationPort)$($context.Request.Url.PathAndQuery)"

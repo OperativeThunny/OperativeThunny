@@ -192,6 +192,7 @@ return $false
         } else {
             Write-Output "Handling a direct or proxied request."
             # TODO: Do we need to handle a non proxied request differently, like if it starts with a / instead of a http://host/ ?
+            #$destinationHost = $request.Url.Host
             $RawUrlParsed = [System.Uri]::new($request.RawUrl)
             $destinationHost = $request.Headers["Host"]
             $destinationPort = $RawUrlParsed.Port
@@ -202,15 +203,20 @@ return $false
                 This is probably a direct request, so use the host header and the url path and query to make the request to the destination server, if it is not localhost."
                 $destinationPort = 80
                 $connectionScheme = "http"
-                # $destinationPort = $destinationHost.Substring($destinationHost.IndexOf(":") + 1)
-                # $destinationHost = $destinationHost.Substring(0, $destinationHost.IndexOf(":"))
 
+write-output $destinationHost
                 if ($destinationHost.IndexOf(":") -gt 0) {
                     try {
-                        $hostParsed = [System.Uri]::new("$($destinationHost)")
-                        $destinationPort = $hostParsed.Port
-                        $destinationHost = $hostParsed.Host
-                        $connectionScheme = $hostParsed.Scheme
+                        # TODO: enforce scheme being present via multiple colons, if it is nly one colon then we only have a hostname and port number.
+                        #$hostParsed = [System.Uri]::new("$($destinationHost)")
+                        #$destinationPort = $hostParsed.Port
+                        #$destinationPort = $request.Url.Port
+                        #$destinationHost = $hostParsed.Host
+                        #$destinationHost = $request.Url.Host
+                        $destinationPort = $destinationHost.Substring($destinationHost.IndexOf(":") + 1)
+                        $destinationHost = $destinationHost.Substring(0, $destinationHost.IndexOf(":"))
+                        #$connectionScheme = $hostParsed.Scheme
+                        $connectionScheme = $request.Url.Scheme
                     } catch {
                         Write-Error "Failed to parse the host header as a URI. The host header is: '$($destinationHost)'"
                     }
@@ -220,9 +226,12 @@ return $false
             }
         }
 
+        $FinalDestination = "$($connectionScheme)://$($destinationHost):$($destinationPort)$($context.Request.Url.PathAndQuery)"
+        Write-Output "Constructed final destination url: $($FinalDestination)"
+
         # get hash of host and url to use as a key for the cache directory.
         $hasher = [System.Security.Cryptography.SHA256]::Create() # TODO: make this a singleton object to avoid the overhead of creating it for every request.
-        $rawhash = $hasher.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($request.RawUrl))
+        $rawhash = $hasher.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($FinalDestination))
         $hash = $([System.BitConverter]::ToString($rawhash).Replace("-", '').ToLower())
         $hashPrefix = $hash.Substring(0, 2)
 
@@ -238,18 +247,28 @@ return $false
 
         if (-not (Test-Path -Path $cacheFile)) {
             Write-Output "Creating cache file: $cacheFile"
-            New-Item -Path $cacheFile -ItemType File | Out-Null
+            #New-Item -Path $cacheFile -ItemType File | Out-Null
+            # Create the cached response only after we successfully get it.
+        } else {
+            # The file exists, return it directly to the response stream and return.
+            # TODO: handle cache invalidation {insert meme about the two hardest things in computer science being naming things, counting, and cache invalidation}
+            Write-Output "The cache file exists, returning it directly to the response stream and returning."
+            $response.StatusCode = 200
+            $response.StatusDescription = "OK"
+            $responseStream = [System.IO.File]::OpenRead($cacheFile)
+            $responseStream.CopyTo($response.OutputStream)
+            $responseStream.Close()
+            $response.Flush()
+            $context.Response.Close()
+            return $true
         }
-
 
         $msg = "Ignoring local request. The requested URL is: $($request.RawUrl)`
             The hash of the URL is: $hash`
             The destination host is: $destinationHost`
             The destination port is: $destinationPort`
             The connection scheme is: $connectionScheme`
-            Path and query: $($context.Request.Url.PathAndQuery)`
-            Header keys: $(ConvertTo-Json -Depth 3 $request.Headers.Keys)`
-            Header values: $(ConvertTo-Json -Depth 10 $request.Headers)`n"
+            Path and query: $($context.Request.Url.PathAndQuery)"
         Write-Output $msg
 return $false
         #if ($context.Request.IsLocal -eq $true -or $destinationHost -eq "localhost" -or $destinationHost -eq "127.0.0.1") {
@@ -269,7 +288,7 @@ return $false
         }
 
         # Create a new HTTP request to the original destination
-        $proxyRequest = [WebRequest]::Create("$($connectionScheme)://$($destinationHost):$($destinationPort)$($context.Request.Url.PathAndQuery)")
+        $proxyRequest = [WebRequest]::Create($FinalDestination)
         # Don't use WebRequest or its derived classes for new development. Instead, use the System.Net.Http.HttpClient class.
         # TODO: Replace WebRequest with HttpClient.
         # See https://learn.microsoft.com/en-us/dotnet/api/system.net.webrequest?view=net-7.0

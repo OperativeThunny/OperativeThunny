@@ -258,7 +258,6 @@ write-output $destinationHost
             $responseStream = [System.IO.File]::OpenRead($cacheFile)
             $responseStream.CopyTo($response.OutputStream)
             $responseStream.Close()
-            $response.Flush()
             $context.Response.Close()
             return $true
         }
@@ -270,7 +269,7 @@ write-output $destinationHost
             The connection scheme is: $connectionScheme`
             Path and query: $($context.Request.Url.PathAndQuery)"
         Write-Output $msg
-return $false
+
         #if ($context.Request.IsLocal -eq $true -or $destinationHost -eq "localhost" -or $destinationHost -eq "127.0.0.1") {
         if ($destinationHost -eq "localhost" -or $destinationHost -eq "127.0.0.1") {
             #Write-Error "Request is local, not proxying."
@@ -314,11 +313,22 @@ return $false
             $context.Response.Headers.Add($header, $proxyResponse.Headers[$header])
         }
 
-        # Copy the response content from the proxy response to the original response
+        # Create two copies of the response stream, send one to the client, and save one to the cache.
         $stream = $proxyResponse.GetResponseStream()
-        $stream.CopyTo($context.Response.OutputStream)
+
+        # clear the file if it exists cuz we went through the trouble of getting the response stream already.
+        if (Test-Path -Path $cacheFile) {
+            [System.IO.File]::Delete($cacheFile)
+        }
+        $cacheStream = [System.IO.File]::OpenWrite($cacheFile)
+        $stream.CopyTo($cacheStream)
+        $cacheStream.Close()
         $stream.Close()
 
+        $cacheFileReadStream = [System.IO.File]::OpenRead($cacheFile)
+        $cacheFileReadStream.CopyTo($context.Response.OutputStream)
+        $context.Response.OutputStream.Flush()
+        $context.Response.OutputStream.Close()
         $context.Response.Close()
 
         return $true

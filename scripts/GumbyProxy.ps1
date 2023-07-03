@@ -39,6 +39,7 @@ support authentication. Eventual goal is to also have this set up as an inline
 transparent proxy that handles caching too.
 
 TODO: figure out how to bind to non localhost without admin access on a non privileged port.
+TODO: Completely re-write this to manually use a TCP server socket and either craft a custom instance of the httplistenercontext object, or more likely re-write it using the stuff in system.net.http.* instead of system.net.httplistener because httplistener is soft deprecated apparently because it is entirely dependent on unmanaged integration with the HTTP.sys driver on windows and there is no support for providing a TLS server on linux. I guess this is why they made kestrel.... lol...
 
 #>
 

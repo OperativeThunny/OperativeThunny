@@ -339,7 +339,7 @@ return $false
         #$htout = $context.Response.OutputStream
         $htout.WriteLine("YOU DONE MESSED UP, A-A-RON (There was an error handling a proxied request/response):")
         $htout.WriteLine($_.Exception.Message)
-        $htout.WriteLine($($_ | ConvertTo-Json -Depth 1))
+        $htout.WriteLine($_)
         $htout.Flush()
         $context.Response.StatusCode = 500
         $context.Response.Close()

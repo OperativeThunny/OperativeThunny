@@ -412,8 +412,8 @@ try {
         # TODO: Handle the possibility of a filesystem race condition if two requests for the same URL come in fast and the cache does not already exist, that will have to be handled before spawning a thread to handle the request.
         [HttpListenerContext]$context = [HttpListenerContext]$(await ($listener.GetContextAsync()))
         
-        #(Start-ThreadJob -ScriptBlock $handleIndividualRequest -ArgumentList $($context), $($handlersArray) ) # | Out-Null
-        (Invoke-Command -ScriptBlock $handleIndividualRequest -ArgumentList $($context), $($handlersArray) ) # | Out-Null
+        (Start-ThreadJob -ScriptBlock $handleIndividualRequest -ArgumentList $($context), $($handlersArray) ) | Out-Null
+        #(Invoke-Command -ScriptBlock $handleIndividualRequest -ArgumentList $($context), $($handlersArray) ) # | Out-Null
 
         # Get output and remove jobs that have finished executing (hopefully not the one we just started):
         Write-Host -BackgroundColor Green "=================== Finished Thread Output: "

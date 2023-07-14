@@ -101,7 +101,7 @@ Set-Alias -Name await -Value Wait-Task -Force
     The first handler to return a non null value will be the last handler to be invoked.
     The handlers will be invoked in the order they are specified in the array.
 #>
-$handleIndividualRequest = {
+[scriptblock]$handleIndividualRequest = [scriptblock]::Create({
     [cmdletbinding()]
     param(
         [System.Net.HttpListenerContext]$context,
@@ -149,12 +149,15 @@ $handleIndividualRequest = {
         $htout.WriteLine("No handler function indicated that they handled the request by returning a non null value.")
         $htout.Flush()
         $context.Response.Close()
+        return "No handler function indicated that they handled the request by returning a non null value."
     } catch {
         Write-Error "Failed to close the response with an indicator of non implementation of handler for request."
     } finally {
         Write-Output "Done with this request."
     }
-}
+
+    return "Done with this request."
+})
 
 # TODO: Can this work as a function instead of a script block?
 <#
@@ -166,7 +169,7 @@ $handleIndividualRequest = {
     A string indicating the result of the request handling. Return $null to indicate that the request was not handled.
     A null return value will cause the next handler to be called. Do **NOT** return $null if you call close/dispose on the context, or response objects.
 #>
-$proxyRequest = {
+[scriptblock]$proxyRequest = [scriptblock]::Create({
     [cmdletbinding()]
     param(
         [System.Net.HttpListenerContext]$context
@@ -182,6 +185,21 @@ $proxyRequest = {
         # Get the original destination host and port
         # TODO: Do more parsing to be able to handle any port and proto (tls) etc...
         # here and where the webrequest is created to the destination server:
+<#
+The way HTTP requests come in, the first line of the request is the METHOD, the URL, and the HTTP version, separated by spaces.
+
+For web requests where the client is treating us as the final endpoint, the line looks something like this, ignoring the existance of HTTP/2:
+GET /path/to/file.html HTTP/1.1
+
+For web requests where the client is treating us as a proxy, the line looks something like this:
+GET http://host.example.com/path/to/file.html HTTP/1.1
+
+For web requests where the client is treating us as a proxy, but the client is using the CONNECT method to establish a tunnel to the destination server 
+    (i.e. when using a TLS connection aka using us as an https proxy), the line looks something like this:
+CONNECT host.example.com:443 HTTP/1.1
+
+The following code tries to use the available objects to parse the relevant information from the request.
+#>
         if ($request.HttpMethod -eq "CONNECT") {
             Write-Output "Handling a CONNECT request, expectedly a deliberate proxy request."
             # Retrieve the destination host and port from the CONNECT request.
@@ -191,10 +209,12 @@ return $false
             $destinationPort = $request.Url.Port
             $connectionScheme = $request.Url.Scheme
         } else {
-            Write-Output "Handling a direct or proxied request."
-            # TODO: Do we need to handle a non proxied request differently, like if it starts with a / instead of a http://host/ ?
-            #$destinationHost = $request.Url.Host
-            $RawUrlParsed = [System.Uri]::new($request.RawUrl)
+            Write-Output "Handling a direct or proxied request to raw URL: $($request.RawUrl))"
+            $rurl = $request.RawUrl
+            if ($rurl.StartsWith("/")) {
+                $rurl = "file://" + $rurl
+            }
+            $RawUrlParsed = [System.Uri](([System.UriBuilder]::new($rurl)).Uri)
             $destinationHost = $request.Headers["Host"]
             $destinationPort = $RawUrlParsed.Port
             $connectionScheme = $RawUrlParsed.Scheme
@@ -206,6 +226,7 @@ return $false
                 $connectionScheme = "http"
 
                 if ($destinationHost.IndexOf(":") -gt 0) {
+                    # Handle the case of a host header that includes a port number.
                     try {
                         $destinationPort = $destinationHost.Substring($destinationHost.IndexOf(":") + 1)
                         $destinationHost = $destinationHost.Substring(0, $destinationHost.IndexOf(":"))
@@ -267,7 +288,7 @@ return $false
             The destination host is: $destinationHost`
             The destination port is: $destinationPort`
             The connection scheme is: $connectionScheme`
-            Path and query: $($context.Request.Url.PathAndQuery)"
+            Path and query: $($context.Request.Url.PathAndQuery)`n`n"
         Write-Output $msg
 
         #if ($context.Request.IsLocal -eq $true -or $destinationHost -eq "localhost" -or $destinationHost -eq "127.0.0.1") {
@@ -290,6 +311,7 @@ return $false
         $proxyRequest = [WebRequest]::Create($FinalDestination)
         # Don't use WebRequest or its derived classes for new development. Instead, use the System.Net.Http.HttpClient class.
         # TODO: Replace WebRequest with HttpClient.
+        # TODO: Also look into System.Net.WebClient
         # See https://learn.microsoft.com/en-us/dotnet/api/system.net.webrequest?view=net-7.0
         #$client = [System.Net.Http.HttpClient]::new()
 
@@ -343,17 +365,18 @@ return $false
         $htout.Flush()
         $context.Response.StatusCode = 500
         $context.Response.Close()
+        return $_
     }
     finally {
         $context.Response.Close()
     }
 
     if ($null -ne $context) {
-        $context.Dispose()
+        $context.Response.Dispose()
     }
 
-    return $false
-}
+    return "Completed handling of request but we have not returned anything at this point. so something borked."
+})
 
 
 
@@ -379,13 +402,18 @@ try {
     Write-Host "Proxy server started. Listening on $($listener.Prefixes -join ', ')"
     Write-Host "Press Ctrl+C to stop the proxy server."
 
+    [scriptblock[]] $handlersArray = [scriptblock[]]@($proxyRequest)
+
     while ($listener.IsListening) {
         # Dispatch a thread to handle the request
         # TODO: Figure out how to set the jobs to automatically output stdout to console and close and remove on their own or have the get job receive job be done asynch, maybe even in another job??
         Write-Host -BackgroundColor Green "Waiting for connection..."
         # TODO: There is a bug that when the script first starts the first two http requests have to come in slowly, or else for some reason it breaks. If a couple requests come in with a minimum time delta of .25 seconds things seem to work, then after that if I change the testing script to have no sleeps in it, then the script works appropriatly.
         # TODO: Handle the possibility of a filesystem race condition if two requests for the same URL come in fast and the cache does not already exist, that will have to be handled before spawning a thread to handle the request.
-        (Start-ThreadJob -ScriptBlock $handleIndividualRequest -ArgumentList $(await ($listener.GetContextAsync())), @($proxyRequest) ) | Out-Null
+        [HttpListenerContext]$context = [HttpListenerContext]$(await ($listener.GetContextAsync()))
+        
+        #(Start-ThreadJob -ScriptBlock $handleIndividualRequest -ArgumentList $($context), $($handlersArray) ) # | Out-Null
+        (Invoke-Command -ScriptBlock $handleIndividualRequest -ArgumentList $($context), $($handlersArray) ) # | Out-Null
 
         # Get output and remove jobs that have finished executing (hopefully not the one we just started):
         Write-Host -BackgroundColor Green "=================== Finished Thread Output: "

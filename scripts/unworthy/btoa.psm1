@@ -74,23 +74,29 @@ function btoa {
 
     $outputAdjustmentOffset = 33 # This is the amount to add to the value after converting the base aka radix to 85 to get a byte value in the ascii range of printable characters.
 
-    $inbytes = [System.IO.File]::ReadAllBytes($InputFile)
-    [byte[]]$current5 = [byte[]]::CreateInstance([byte], 5)
+    #$inbytes = [System.IO.File]::ReadAllBytes($InputFile)
+    #[byte[]]$current5 = [byte[]]::CreateInstance([byte], 5)
 
     $OutputFile = "testingbtoa.txt"
     $testInput = "Man is distinguished, not only by his reason, but by this singular passion from other animals, which is a lust of the mind, that by a perseverance of delight in the continued and indefatigable generation of knowledge, exceeds the short vehemence of any carnal pleasure."
     # Testing string to match wiki
     $inbytes = $testInput.ToCharArray() | ForEach-Object { [byte]$_ }
-    $expectedOutput = @"
-9jqo^BlbD-BleB1DJ+*+F(f,q/0JhKF<GL>Cj@.4Gp`$d7F!,L7@<6@)/0JDEF<G%<+EV:2F!,O<DJ+*.@<*K0@<6L(Df-\0Ec5e;DffZ(EZee.Bl.9pF""AGXBPCsi+DGm>@3BB/F*&OCAfu2/AKYi(DIb:@FD,*)+C]UER(..I9)<Ff2M7/c
-"@
+
+$expectedOutput = "
+9jqo^BlbD-BleB1DJ+*+F(f,q/0JhKF<GL>Cj@.4Gp`$d7F!,L7@<6@)/0JDEF<G%<+EV:2F!,O<
+DJ+*.@<*K0@<6L(Df-\0Ec5e;DffZ(EZee.Bl.9pF`"AGXBPCsi+DGm>@3BB/F*&OCAfu2/AKYi(
+DIb:@FD,*)+C]U=@3BN#EcYf8ATD3s@q?d`$AftVqCh[NqF<G:8+EV:.+Cf>-FD5W8ARlolDIal(
+DId<j@<?3r@:F%a+D58'ATD4`$Bl@l3De:,-DJs``8ARoFb/0JMK@qB4^F!,R<AKZ&-DfTqBG%G>u
+D.RTpAKYo'+CT/5+Cei#DII?(E,9)oF*2M7/c" -replace "`n", "" -replace "`r", ""
 
     # Pad the input bytes to a multiple of 4
+    $padding = 0
     if ($inbytes.Length % 4 -ne 0) {
         $inbytes = $inbytes + [byte[]]::CreateInstance([byte], 4 - ($inbytes.Length % 4))
+        $padding = 4 - ($inbytes.Length % 4)
     }
 
-    $outputBytes = [byte[]]::CreateInstance([byte], $inbytes.Length * 5)
+    $outputBytes = [byte[]]::CreateInstance([byte], (($inbytes.Length * 5)/4) )
     $bigChunkus = 0
 
     for ($i = 0; $i -lt $inbytes.Length; $i += 4) {
@@ -98,9 +104,9 @@ function btoa {
         # Do we need to reverse this to process the bytes as big endian? No, we do not. We could process everything in place with clever math and bit shifting. But, this is easier to understand.
         [Array]::Reverse($chunk) # No, we do not need to reverse it! # Yes, we do!
         [int32]$integerFromBytes = [System.BitConverter]::ToInt32($chunk, 0)
-        $integerFromBytes
+        #$integerFromBytes
         if ($integerFromBytes -eq 0) {
-            $outsb.Append('z')
+            $outputBytes[$bigChunkus] = [byte]('z')
             continue
         }
 
@@ -108,7 +114,7 @@ function btoa {
         $k = 4 # too bad powershell cant do for loops with multiple initializers and incrementers
         do {
             #$integerFromBytes % 85
-            $current5[$k] = [byte](($integerFromBytes % 85) + $outputAdjustmentOffset)
+            #$current5[$k] = [byte](($integerFromBytes % 85) + $outputAdjustmentOffset)
             $outputBytes[$bigChunkus + $k] = [byte](($integerFromBytes % 85) + $outputAdjustmentOffset)
             #[byte](($integerFromBytes % 85) + $outputAdjustmentOffset)
             $integerFromBytes = [math]::Floor($integerFromBytes / 85)
@@ -118,15 +124,29 @@ function btoa {
         $bigChunkus += 5
 
         assert($integerFromBytes -eq 0, "Erronious situation detected. we are left with more than 0 after converting to radix 85.")
-        [System.Text.Encoding]::ASCII.GetString($current5)
-        $outputBytes | Format-Hex # Todo: figure out how to use the console to show the hex output change over time live instead outputting it over and over again.
+        #[System.Text.Encoding]::ASCII.GetString($current5)
     }
 
-    $outbytes = [System.Text.Encoding]::ASCII.GetBytes($outsb.ToString())
+    echo "We have exited the encoding loop."
+    #$outputBytes | Format-Hex # Todo: figure out how to use the console to show the hex output change over time live instead outputting it over and over again.
+    $EncodedString = [System.Text.Encoding]::ASCII.GetString($outputBytes, 0, ($outputBytes.Length - $padding) + 1)
+    $EncodedString | Format-Hex
+    $expectedOutput | Format-Hex
+    $EncodedString
+    $expectedOutput 
+    $EncodedString.Length
+    $expectedOutput.Length
 
-    [System.IO.File]::WriteAllBytes($OutputFile, $outbytes)
+    [System.Text.Encoding]::ASCII.GetString([System.Convert]::GetBytes($expectedOutput))
+    
+    assert($expectedOutput.Equals($EncodedString), "Expected output does not match actual output.")
+    #$outbytes = [System.Text.Encoding]::ASCII.GetBytes($outsb.ToString())
 
+    $OutFileHandle = [System.IO.File]::OpenWrite($OutputFile)
+    $OutFileHandle.Write($outputBytes, 0, $outputBytes.Length - $padding)
+    $OutFileHandle.Close()
 
+    #[System.Text.Encoding]::
 
     # 1. READ INPUT FILE AS BYTE ARRAY
     # 2. CONVERT INPUT BYTE ARRAY TO BASE85

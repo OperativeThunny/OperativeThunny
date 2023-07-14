@@ -39,8 +39,15 @@ __bash_prompt() {
     local removecolor='\[\033[0m\]'
     PS1="${userpart} ${lightblue}\w ${gitbranch}${removecolor}\$ "
 
-    export PS1="\[\]\n\[\e[30;1m\]\[\033(0\]l\[\033(B\](\[\e[34;1m\]\u@\h\[\e[30;1m\])-(\[\e[34;1m\]\j\[\e[30;1m\])\
--(\[\e[34;1m\]\@ \d\[\e[30;1m\])->\[\e[30;1m\]\n\[\033(0\]m\[\033(B\]-(\[\[\e[32;1m\]\w\[\e[30;1m\])-(\[\e[32;1m\]\
+    export PS1="\
+\[\]\n\[\e[30;1m\]\[\033(0\]l\[\033(B\](\[\e[34;1m\]\u@\h\[\e[30;1m\])\
+-\
+(\[\e[34;1m\]\j\[\e[30;1m\])\
+-\
+(\[\e[34;1m\]\@ \d\[\e[30;1m\])->\[\e[30;1m\]\n\
+\[\033(0\]m\[\033(B\]-\
+(\[\[\e[32;1m\]\w\[\e[30;1m\])-\
+(\[\e[32;1m\]\
 $(/bin/ls -1 | /usr/bin/wc -l | /bin/sed 's: ::g') files, \
 $(/bin/ls -lah | /bin/grep -m 1 total \
 | /bin/sed 's/total //'\
@@ -49,7 +56,7 @@ $(/bin/ls -lah | /bin/grep -m 1 total \
 \[\e[30;1m\])--> \[\e[0m\]\[\]"
 
 
-    # unset -f __bash_prompt
+    unset -f __bash_prompt
 }
 __bash_prompt
 export PROMPT_DIRTRIM=4

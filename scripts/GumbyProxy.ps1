@@ -249,6 +249,7 @@ return $false
         $FinalDestination = "$($connectionScheme)://$($destinationHost):$($destinationPort)$($context.Request.Url.PathAndQuery)"
         Write-Output "Constructed final destination url: $($FinalDestination)"
 
+        # TODO: Add command line toggle for caching
         # get hash of host and url to use as a key for the cache directory.
         $hasher = [System.Security.Cryptography.SHA256]::Create() # TODO: make this a singleton object to avoid the overhead of creating it for every request.
         $rawhash = $hasher.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($FinalDestination))
@@ -320,19 +321,46 @@ return $false
 
         $proxyRequest.Method = $context.Request.HttpMethod
         $proxyRequest.ContentType = $context.Request.ContentType
+        $proxyRequest.Credentials = [System.Net.CredentialCache]::DefaultNetworkCredentials
+        $proxyRequest.UseDefaultCredentials = $true
+        $proxyRequest.Timeout = (15 * 1000) # 15 seconds, this timout property is defined in milliseconds.
 
         # Copy headers from the original request to the proxy request
         # TODO: Handle headers that will cause this to break.
+        $borkedHeaders = "Host", "Connection", "User-Agent"
         foreach ($header in $context.Request.Headers) {
-            if ($header -ne "Host") {
+            if ( ($borkedHeaders -ne $header).Length -ne $borkedHeaders.Length) {
                 $proxyRequest.Headers.Add($header, $context.Request.Headers[$header])
             }
         }
 
-        # TODO: Error handling for this line. if this explodes we need to send an error to the client and THEN close the connection.
-        # Get the response from the original destination
-        $proxyResponse = $proxyRequest.GetResponse()
-
+        try { 
+            if ($context.Request.ContentLength64 -gt 0) {
+                $proxyRequest.ContentLength = $context.Request.ContentLength64
+                $context.Request.InputStream.CopyTo($proxyRequest.GetRequestStream()) # TODO: actually test this??
+            }
+            # TODO: Error handling for this line. if this explodes we need to send an error to the client and THEN close the connection.
+            $proxyResponse = $proxyRequest.GetResponse()
+        } catch {
+            Write-Error "Failed to get response from destination server. '$($FinalDestination)': $($_.Exception.Message)"
+            $htout = [System.IO.StreamWriter]::new($context.Response.OutputStream)
+            $htout.WriteLine("YOU DONE MESSED UP A-A-RON! '$($FinalDestination)': $($_.Exception.Message)")
+            $htout.WriteLine("")
+            $htout.WriteLine("⌠")
+            $htout.WriteLine("⌡ x dx = x^2 + C")
+            $htout.WriteLine("")
+            $htout.WriteLine($_.Exception.Source.Line)
+            $htout.WriteLine("")
+            $htout.WriteLine($_.Exception.Source)
+            $htout.WriteLine("")
+            $htout.WriteLine($_.Exception.StackTrace)
+            $htout.WriteLine("`n`n`n§")
+            $htout.Flush()
+            $response.StatusCode = 500
+            $response.StatusDescription = "Internal Server Error"
+            $response.Close()
+            return "Failed to get response from destination server. '$($FinalDestination)': $($_.Exception.Message)"
+        }
         # Copy headers from the proxy response to the original response
         foreach ($header in $proxyResponse.Headers) {
             $context.Response.Headers.Add($header, $proxyResponse.Headers[$header])

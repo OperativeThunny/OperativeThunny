@@ -322,12 +322,14 @@ return $false
         $proxyRequest.ContentType = $context.Request.ContentType
 
         # Copy headers from the original request to the proxy request
+        # TODO: Handle headers that will cause this to break.
         foreach ($header in $context.Request.Headers) {
             if ($header -ne "Host") {
                 $proxyRequest.Headers.Add($header, $context.Request.Headers[$header])
             }
         }
 
+        # TODO: Error handling for this line. if this explodes we need to send an error to the client and THEN close the connection.
         # Get the response from the original destination
         $proxyResponse = $proxyRequest.GetResponse()
 

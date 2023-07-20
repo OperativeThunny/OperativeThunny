@@ -23,6 +23,8 @@ param(
     [UInt16]$RemotePort
 )
 
+$Global:M_HAROLD_DEBUG = $true
+
 # cmdlet to copy one stream to another using a buffer:
 function Copy-Stream {
     [CmdletBinding()]
@@ -58,7 +60,7 @@ function Copy-Stream {
 
 # Step 2: Create a socket
 $socket = [System.Net.Sockets.Socket]::new(
-#    [System.Net.Sockets.AddressFamily]::InterNetwork,
+#    [System.Net.Sockets.AddressFamily]::InterNetwork, # Commented out to use a different constructor overload which resuls in different socket behavior as a side effect...
     [System.Net.Sockets.SocketType]::Stream,
     [System.Net.Sockets.ProtocolType]::Tcp
 )
@@ -83,7 +85,7 @@ $remoteEndpoint
 try {
     $socket.Bind($LocalEndpoint)
     $socket.Listen(500)
-
+# TODO: Re-write this using System.Net.Sockets.Socket.Poll() instead of how it is now.
     while ($socket.IsBound) {
         $connectionSocket = $socket.Accept()
 
@@ -98,23 +100,29 @@ try {
         
         if ($remoteSocket.Connected) {
             do {
-                $bytesFromClient = $connectionSocket.Receive($localBuffer, 0, $localBuffer.Length, [System.Net.Sockets.SocketFlags]::None)
-                $bytesToServer = $remoteSocket.Send($localBuffer, 0, $bytesFromClient, [System.Net.Sockets.SocketFlags]::None)
+                if ($connectionSocket.Available -gt 0) {
+                    $bytesFromClient = $connectionSocket.Receive($localBuffer, 0, $localBuffer.Length, [System.Net.Sockets.SocketFlags]::None)
+                    $bytesToServer = $remoteSocket.Send($localBuffer, 0, $bytesFromClient, [System.Net.Sockets.SocketFlags]::None)
+        
+                    if ($bytesFromClient -ne $bytesToServer) {
+                        Write-Error "Bytes from client ($bytesFromClient) does not match bytes to server ($bytesToServer)."
+                    }
+        
+                    if ($bytesFromClient -eq 0) {
+                        Write-Output "Client disconnected."
+                        break
+                    }
+        
+                    if ($bytesToServer -eq 0) {
+                        Write-Output "Server disconnected."
+                        break
+                    }
 
-                if ($bytesFromClient -ne $bytesToServer) {
-                    Write-Error "Bytes from client ($bytesFromClient) does not match bytes to server ($bytesToServer)."
+                    $Global:M_HAROLD_DEBUG && Write-Output "Read $bytesFromClient bytes from client and wrote $bytesToServer bytes to server."
+                } else {
+                    $Global:M_HAROLD_DEBUG && Write-Output "No data available from client."
                 }
-
-                if ($bytesFromClient -eq 0) {
-                    Write-Output "Client disconnected."
-                    break
-                }
-
-                if ($bytesToServer -eq 0) {
-                    Write-Output "Server disconnected."
-                    break
-                }
-
+                
                 $bytesFromServer = $remoteSocket.Receive($remoteBuffer, 0, $remoteBuffer.Length, [System.Net.Sockets.SocketFlags]::None)
                 $bytesToClient = $connectionSocket.Send($remoteBuffer, 0, $bytesFromServer, [System.Net.Sockets.SocketFlags]::None)
 

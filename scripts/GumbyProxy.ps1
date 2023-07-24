@@ -343,21 +343,26 @@ return $false
             $proxyResponse = $proxyRequest.GetResponse()
         } catch {
             Write-Error "Failed to get response from destination server. '$($FinalDestination)': $($_.Exception.Message)"
-            $htout = [System.IO.StreamWriter]::new($context.Response.OutputStream)
-            $htout.WriteLine("YOU DONE MESSED UP A-A-RON! '$($FinalDestination)': $($_.Exception.Message)")
-            $htout.WriteLine("")
-            $htout.WriteLine("⌠")
-            $htout.WriteLine("⌡ x dx = x^2 + C")
-            $htout.WriteLine("")
-            $htout.WriteLine($_.Exception.Source.Line)
-            $htout.WriteLine("")
-            $htout.WriteLine($_.Exception.Source)
-            $htout.WriteLine("")
-            $htout.WriteLine($_.Exception.StackTrace)
-            $htout.WriteLine("`n`n`n§")
-            $htout.Flush()
-            $response.StatusCode = 500
+            #$htout = [System.IO.StreamWriter]::new($context.Response.OutputStream)
+            $ErrMsgToClient = [string[]]@()
+            $ErrMsgToClient += $("YOU DONE MESSED UP A-A-RON!`n$(`"=`"*80)`n'$($FinalDestination)': $($_.Exception.Message)")
+            $ErrMsgToClient += $("`nΩ`n")
+            $ErrMsgToClient += $("⌠")
+            $ErrMsgToClient += $("| x dx = x^2 + C")
+            $ErrMsgToClient += $("⌡")
+            $ErrMsgToClient += $("`n`n")
+            $ErrMsgToClient += $($_.Exception.Source.Line)
+            $ErrMsgToClient += $("`n`n")
+            $ErrMsgToClient += $($_.Exception.Source)
+            $ErrMsgToClient += $("`n`n")
+            $ErrMsgToClient += $($_.Exception.StackTrace)
+            $ErrMsgToClient += $("`n`n`n§")
+            $BytesToClient = [System.Text.Encoding]::UTF8.GetBytes($ErrMsgToClient -join "`n")
+            $response.OutputStream.Write($BytesToClient, 0, $BytesToClient.Length)
+            $response.ContentLength64 = $BytesToClient.Length
             $response.StatusDescription = "Internal Server Error"
+            $response.StatusCode = 500
+            $response.OutputStream.Flush()
             $response.Close()
             return "Failed to get response from destination server. '$($FinalDestination)': $($_.Exception.Message)"
         }

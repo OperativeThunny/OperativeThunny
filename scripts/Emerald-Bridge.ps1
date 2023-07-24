@@ -86,6 +86,7 @@ try {
     $socket.Bind($LocalEndpoint)
     $socket.Listen(500)
 # TODO: Re-write this using System.Net.Sockets.Socket.Poll() instead of how it is now.
+# TODO: Ignore that last TODO, re-write this using System.Net.Sockets.Socket.Select() because poll uses select under the hood in .net, and it also does a new IntPtr[] allocation each time you call it, causing more memory usage (https://stackoverflow.com/questions/1249643/is-there-a-way-to-poll-a-socket-in-c-sharp-only-when-something-is-available-for/23737811#23737811)
     while ($socket.IsBound) {
         $connectionSocket = $socket.Accept()
 

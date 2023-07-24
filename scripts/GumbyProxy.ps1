@@ -32,6 +32,8 @@ Interesting reference material:
     https://www.b-blog.info/en/it-eng/implement-multi-threading-with-net-runspaces-in-powershell
     https://drakelambert.dev/2021/09/Quick-HTTP-Listener-in-PowerShell.html
     https://stackoverflow.com/questions/62206377/how-to-use-system-threading-thread-in-powershell
+    https://powershellscript.home.blog/2019/10/29/powershell-runspace/
+    https://github.com/p3nt4/Invoke-SocksProxy/blob/master/Invoke-SocksProxy.psm1#L211
 
 
 $ This is a web proxy script, it will eventually be a proxy to handle windows

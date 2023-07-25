@@ -24,17 +24,17 @@ sketch Gumby Brain Specialist.
 License: All rights reserved. This code is not licensed for use by anyone other than the author at this time.
 Copyright: OperativeThunny (C) 2023.
 
-Interesting reference material:
-    https://github.com/jpetazzo/squid-in-a-can
-    https://www.powershellgallery.com/packages/HttpListener/1.0.2/Content/HTTPListener.psm1
-    https://blog.ironmansoftware.com/powershell-async-method/
-    https://gist.github.com/aconn21/946c702cfcc08d10e1c0984535765ae3
-    https://www.b-blog.info/en/it-eng/implement-multi-threading-with-net-runspaces-in-powershell
-    https://drakelambert.dev/2021/09/Quick-HTTP-Listener-in-PowerShell.html
-    https://stackoverflow.com/questions/62206377/how-to-use-system-threading-thread-in-powershell
-    https://powershellscript.home.blog/2019/10/29/powershell-runspace/
-    https://github.com/p3nt4/Invoke-SocksProxy/blob/master/Invoke-SocksProxy.psm1#L211
-
+Interesting and useful reference material aka sources:
+    01. https://github.com/jpetazzo/squid-in-a-can
+    02. https://www.powershellgallery.com/packages/HttpListener/1.0.2/Content/HTTPListener.psm1
+    03. https://blog.ironmansoftware.com/powershell-async-method/
+    04. https://gist.github.com/aconn21/946c702cfcc08d10e1c0984535765ae3
+    05. https://www.b-blog.info/en/it-eng/implement-multi-threading-with-net-runspaces-in-powershell
+    06. https://drakelambert.dev/2021/09/Quick-HTTP-Listener-in-PowerShell.html
+    07. https://stackoverflow.com/questions/62206377/how-to-use-system-threading-thread-in-powershell
+    08. https://powershellscript.home.blog/2019/10/29/powershell-runspace/
+    09. https://github.com/p3nt4/Invoke-SocksProxy/blob/master/Invoke-SocksProxy.psm1#L211
+    10. https://stackoverflow.com/questions/18835851/replacing-a-string-within-a-stream-in-c-sharp-without-overwriting-the-original
 
 $ This is a web proxy script, it will eventually be a proxy to handle windows
 authentication to a sharepoint server seemlessly for a tool that does not

@@ -35,6 +35,8 @@ Interesting and useful reference material aka sources:
     08. https://powershellscript.home.blog/2019/10/29/powershell-runspace/
     09. https://github.com/p3nt4/Invoke-SocksProxy/blob/master/Invoke-SocksProxy.psm1#L211
     10. https://stackoverflow.com/questions/18835851/replacing-a-string-within-a-stream-in-c-sharp-without-overwriting-the-original
+    11. https://stackoverflow.com/questions/46187640/could-not-establish-trust-relationship-for-the-ssl-tls-secure-channel-with-invok
+    
 
 $ This is a web proxy script, it will eventually be a proxy to handle windows
 authentication to a sharepoint server seemlessly for a tool that does not

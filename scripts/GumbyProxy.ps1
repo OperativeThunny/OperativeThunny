@@ -45,7 +45,11 @@ transparent proxy that handles caching too.
 
 TODO: figure out how to bind to non localhost without admin access on a non privileged port.
 TODO: Completely re-write this to manually use a TCP server socket and either craft a custom instance of the httplistenercontext object, or more likely re-write it using the stuff in system.net.http.* instead of system.net.httplistener because httplistener is soft deprecated apparently because it is entirely dependent on unmanaged integration with the HTTP.sys driver on windows and there is no support for providing a TLS server on linux. I guess this is why they made kestrel.... lol...
-
+#https://webcache.googleusercontent.com/search?q=cache:TDDVRn06BJ0J:https://herringsfishbait.com/2014/09/11/powershell-get-folder-size-on-disk-one-line-command/&cd=11&hl=en&ct=clnk&gl=us&client=firefox-b-1-e
+GCI C:\source -recurse | Group-Object -Property Directory |
+ % {New-Object PSObject -Property @{Name=$_.Name;Size=($_.Group |
+ ? {!($_.PSIsContainer)} | Measure-Object Length -sum).Sum}} |
+ Sort-Object -Property Size -Descending
 #>
 
 using namespace System.Net

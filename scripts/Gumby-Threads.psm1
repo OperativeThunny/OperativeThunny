@@ -161,9 +161,9 @@ class GumbyThreadJeffe : System.IDisposable {
     [void] Dispose() {
         #TODO: make this better
         $this.HULK_SMASH()
-        $this.GumbyPool.Dispose()
         $this.GumbyBody.Dispose()
         $this.GumbySessionState.Dispose()
+        $this.GumbyPool.Dispose()
     }
 }
 

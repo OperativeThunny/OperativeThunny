@@ -138,6 +138,33 @@ class GumbyThreadJeffe : System.IDisposable {
 
         return [PSDataCollection[psobject]]$GumbyResults
     }
+
+    # TODO: GumbyStreams for getting all streams from all threads
+    # TODO: HULK_SMASH for killing all threads, terminate all threads forcefully, first closing completed threads.
+    [PSDataCollection[psobject][]] HULK_SMASH() {
+        [PSDataCollection[psobject][]]$AngryResults = $this.GumbyMerge()
+        $len = $this.GumbyThreads.Length
+
+        for ($i = 0; $i -lt $len; $i++) {
+            $this.GumbyThreads[$i].PSInstanceInvoker.Dispose()
+            $this.GumbyThreads[$i] = $null
+        }
+
+        $this.GumbyThreads = $this.GumbyThreads | Where-Object { $null -ne $_ }
+
+        [GC]::Collect()
+
+        return $AngryResults
+    }
+
+    # TODO: dispose
+    [void] Dispose() {
+        #TODO: make this better
+        $this.HULK_SMASH()
+        $this.GumbyPool.Dispose()
+        $this.GumbyBody.Dispose()
+        $this.GumbySessionState.Dispose()
+    }
 }
 
 class GumbyThreadRunner : System.IDisposable {

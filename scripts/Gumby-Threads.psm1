@@ -1,52 +1,142 @@
 #!/usr/bin/env pwsh
 <#
 Module defines powershell classes and methods for executing multithreaded code in a runspace pool.
+aka
+POWERSHELL THREADS REEEEEEEEEEEEEEEEEEEEEEEEEE!
 
 Author: @OperativeThunny ( bluesky @verboten.zip )
 Date: 20230727
+Last Mod: 1 Aug 2023
 
-object for containing a thread instance handle and powershell object for the singular thread
-object for containing the collection of threads and runspace pool
-object for running threads using a specified script block and a method for dispatching new threads
 
 https://xkln.net/blog/multithreading-in-powershell--running-a-specific-number-of-threads/
 #>
 
+using namespace System.Management.Automation
+using namespace System.Management.Automation.Runspaces
 
+<#
 
+#>
 class GumbyThread : System.IDisposable {
-    [System.Management.Automation.PowerShell] $InvokeHandle
-    [System.Management.Automation.PowerShell] $TheInvoker
+    [System.IAsyncResult] $GumbyThreadHandle # Actual type is internal sealed class [System.Management.Automation.PowershellAsyncResult]
+    [System.Management.Automation.PowerShell] $PSInstanceInvoker
+    [scriptblock]$ThreadCode
 
-    GumbyThread([System.Management.Automation.PowerShell]$TheInvoker) {
-        $this.TheInvoker = $TheInvoker
-        $this.InvokeHandle = $TheInvoker.BeginInvoke()
+    hidden [void] Init([PowerShell]$ThreadInstance, [scriptblock]$GumbyBody, [object]$GumbyParams = $null) {
+        $this.ThreadCode = $GumbyBody
+        $this.PSInstanceInvoker = $ThreadInstance
+        $this.PSInstanceInvoker.AddScript($this.ThreadCode)
+        if ($null -ne $GumbyParams) {
+            if ($GumbyParams -is [System.Collections.IList] -or $GumbyParams -is [System.Collections.IDictionary]) {
+                $this.PSInstanceInvoker.AddParameters($GumbyParams)
+            } else {
+                $this.PSInstanceInvoker.AddArgument($GumbyParams)
+            }
+        }
+        $this.GumbyThreadHandle = $this.PSInstanceInvoker.BeginInvoke()
     }
 
-    [void] Join() {
-        $this.TheInvoker.EndInvoke($this.InvokeHandle)
+    GumbyThread([RunspacePool]$rsp, [scriptblock]$ThreadCode, [object]$ThreadParams = $null) {
+        [Powershell]$this.PSInstanceInvoker = [Powershell]::Create()
+        $this.PSInstanceInvoker.RunspacePool = $rsp
+
+        $this.Init($this.PSInstanceInvoker, $ThreadCode, $ThreadParams)
+    }
+
+    [System.Object] Join() {
+        if ($this.GumbyThreadHandle.IsCompleted) {
+            [System.IAsyncResult]$threadResult = $this.PSInstanceInvoker.EndInvoke($this.GumbyThreadHandle)
+            [void] $this.PSInstanceInvoker.Dispose() # casting to void is equivalent of 2>&1 > $null, | Out-Null, or > $null
+            return $threadResult
+        }
+        #System.Management.Automation.PSDataCollection`1[[System.Management.Automation.PSObject, System.Management.Automation, Version=3.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35]]
+        return $null
+    }
+    # TODO: Implement IDisposable
+    [void] Dispose() {
+        # TODO: make this better
+        [void] $this.PSInstanceInvoker.Dispose()
     }
 }
 
+<#
+Thread manager - pass it code and tell it to start threads and then collect results.
+#>
 class GumbyThreadJeffe : System.IDisposable {
-    #[System.Management.Automation.PowerShell]
-    hidden [System.Collections.Generic.List[GumbyThread]] $Threads
-    hidden [System.Management.Automation.Runspaces.InitialSessionState] $InitialState
-    hidden [System.Management.Automation.Runspaces.RunspacePool] $CoolPool
+    [GumbyThread[]]$GumbyThreads = [GumbyThread[]]@()
+    hidden [System.Management.Automation.ScriptBlock]$GumbyBody
+    [System.Management.Automation.Runspaces.RunspacePool]$GumbyPool
+    [System.Management.Automation.Runspaces.InitialSessionState]$GumbySessionState
+    hidden [System.Double]$CleanupInterval
 
-    GumbyThreadJeffe() {
-        GumbyThreadJeffe([UInt32]69)
+    # Powershell doesn't have syntax for constructor chaining :(
+    hidden [void] Init([scriptblock]$codeToExecuteForElJeffe, [UInt32]$MaxThreads, [double]$CleanupInterval, [initialsessionstate]$initState, [Host.PSHost]$gumbyhost = $host) {
+        [RunspacePool]$this.GumbyPool = [System.Management.Automation.Runspaces.RunspaceFactory]::CreateRunspacePool(
+            1,
+            $MaxThreads,
+            $initState,
+            $gumbyhost
+        )
+        $this.GumbyBody = $codeToExecuteForElJeffe
+        $this.GumbyPool.CleanupInterval = [System.TimeSpan]::FromSeconds($CleanupInterval)
+        $this.GumbyPool.Open()
     }
 
-    GumbyThreadJeffe([UInt32]$InitialThreadContainerSize, [System.Management.Automation.Host.PSHost]$gumbyhost = $host) {
-        $this.Threads = [System.Collections.ArrayList]::new($InitialThreadContainerSize)
-        $this.InitialState = [System.Management.Automation.Runspaces.InitialSessionState]::CreateDefault()
-        $this.CoolPool = [System.Management.Automation.Runspaces.RunspaceFactory]::CreateRunspacePool(1, $InitialThreadContainerSize, $this.InitialState, $gumbyhost)
-        $this.CoolPool.Open()
+    GumbyThreadJeffe ([scriptblock]$ThreadBody, [Host.PSHost]$gumbyhost = $host) {
+        #$rsp.CleanupInterval = [System.TimeSpan]::FromSeconds([double]5.7) # 5/7 iykyk ;) (0.7142857142857143... but meh close enough)
+        $this.Init(
+            $ThreadBody,
+            69,
+            ([double](([double]5.0/[double]7.0)*[double]10.0)),
+            [System.Management.Automation.Runspaces.InitialSessionState]::CreateDefault(),
+            $gumbyhost
+        )
     }
 
-    [void] MethodName($OptionalParameters) {
-        <# Action to perform. You can use $ to reference the current instance of this class #>
+    GumbyThreadJeffe([scriptblock]$ThreadBody, [UInt32]$MaxThreads, [double]$CleanupInterval, [initialsessionstate]$initState, [Host.PSHost]$gumbyhost = $host) {
+        $this.Init($ThreadBody, $MaxThreads, $CleanupInterval, $initState, $gumbyhost)
+    }
+
+    # [void] AddThread([scriptblock]$ThreadCode, [object]$ThreadParams = $null) {
+    #     $this.GumbyThreads += [GumbyThread]::new($this.GumbyPool, $ThreadCode, $ThreadParams)
+    # }
+
+    <#
+    .SYNOPSIS
+        Execute a new thread with the given code and arguments.
+    #>
+    [void] GumbySplit($ThreadArguments) {
+        $t = [GumbyThread]::new($this.GumbyPool, $this.GumbyBody, $ThreadArguments)
+        $this.GumbyThreads += $t
+        Write-Output "Threads left: $($this.GumbyPool.GetAvailableRunspaces())"
+    }
+
+    [PSDataCollection[psobject][]] GumbyMerge() {
+        # this **might** be faster than foreach beacuse foreach grabs an enumerator??
+        $len = $this.GumbyThreads.Length
+        $dirty = $false
+        [PSDataCollection[psobject][]]$GumbyResults = [PSDataCollection[psobject][]]@()
+        for ($i = 0; $i -lt $len; $i++) {
+            [GumbyThread]$thread = $this.GumbyThreads[$i]
+
+            if ($null -eq $thread) {
+                continue
+            }
+
+            if ($thread.GumbyThreadHandle.IsCompleted) {
+                $GumbyResults += ([PSDataCollection[psobject]](([PowerShell]($thread.PSInstanceInvoker)).EndInvoke($thread.GumbyThreadHandle)))
+                [void] ([PowerShell]($thread.PSInstanceInvoker)).Dispose()
+                $this.GumbyThreads[$i] = $null
+                $dirty = $true
+            }
+        }
+
+        if ($dirty) {
+            $this.GumbyThreads = $this.GumbyThreads | Where-Object { $null -ne $_ }
+        }
+
+        return [PSDataCollection[psobject]]$GumbyResults
     }
 }
 

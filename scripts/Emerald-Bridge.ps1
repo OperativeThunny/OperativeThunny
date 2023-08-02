@@ -86,7 +86,7 @@ try {
     $socket.Bind($LocalEndpoint)
     $socket.Listen(500)
 # TODO: Re-write this using System.Net.Sockets.Socket.Poll() instead of how it is now.
-# TODO: Ignore that last TODO, re-write this using System.Net.Sockets.Socket.Select() because poll uses select under the hood in .net, and it also does a new IntPtr[] allocation each time you call it, causing more memory usage (https://stackoverflow.com/questions/1249643/is-there-a-way-to-poll-a-socket-in-c-sharp-only-when-something-is-available-for/23737811#23737811)
+# TODO: Ignore that last TODO, re-write this using System.Net.Sockets.Socket.Select() because poll uses select under the hood in .net, and it also does a new IntPtr[] allocation each time you call it, causing more memory usage ( https://stackoverflow.com/questions/1249643/is-there-a-way-to-poll-a-socket-in-c-sharp-only-when-something-is-available-for/23737811#23737811 )
     while ($socket.IsBound) {
         $connectionSocket = $socket.Accept()
 
@@ -98,22 +98,22 @@ try {
         Write-Output "Connecting to remote socket..."
         $remoteSocket.Connect($remoteEndpoint)
         #[System.Net.Sockets.NetworkStream]$remoteStream = [System.Net.Sockets.NetworkStream]::new($remoteSocket, $true)
-        
+
         if ($remoteSocket.Connected) {
             do {
                 if ($connectionSocket.Available -gt 0) {
                     $bytesFromClient = $connectionSocket.Receive($localBuffer, 0, $localBuffer.Length, [System.Net.Sockets.SocketFlags]::None)
                     $bytesToServer = $remoteSocket.Send($localBuffer, 0, $bytesFromClient, [System.Net.Sockets.SocketFlags]::None)
-        
+
                     if ($bytesFromClient -ne $bytesToServer) {
                         Write-Error "Bytes from client ($bytesFromClient) does not match bytes to server ($bytesToServer)."
                     }
-        
+
                     if ($bytesFromClient -eq 0) {
                         Write-Output "Client disconnected."
                         break
                     }
-        
+
                     if ($bytesToServer -eq 0) {
                         Write-Output "Server disconnected."
                         break
@@ -123,7 +123,7 @@ try {
                 } else {
                     $Global:M_HAROLD_DEBUG && Write-Output "No data available from client."
                 }
-                
+
                 $bytesFromServer = $remoteSocket.Receive($remoteBuffer, 0, $remoteBuffer.Length, [System.Net.Sockets.SocketFlags]::None)
                 $bytesToClient = $connectionSocket.Send($remoteBuffer, 0, $bytesFromServer, [System.Net.Sockets.SocketFlags]::None)
 
@@ -143,7 +143,7 @@ try {
 
             } while ($remoteSocket.Connected -and $connectionSocket.Connected -and $bytesFromClient -gt 0 -and $bytesFromServer -gt 0)
 
-            
+
             # while ($localStream.CanRead -and $remoteStream.CanWrite) {
             #     Write-Output "reading from inbound writing to outbound"
             #     Copy-Stream $localStream $remoteStream $localBuffer.Length $localBuffer
@@ -155,15 +155,15 @@ try {
             #     write-Output "flushing inbound"
             #     $localStream.Flush()
             # }
-        
+
             # $localStream.Close()
             # $remoteStream.Close()
             $connectionSocket.Close()
             $remoteSocket.Close()
         } else {
-            try { 
+            try {
                 $connectionSocket.Disconnect()
-                $connectionSocket.Close() 
+                $connectionSocket.Close()
                 $socket.Close()
                 break
             } catch {
@@ -175,9 +175,9 @@ try {
     if ($remoteSocket.Connected) {
         $remoteSocket.Disconnect($false)
     }
-    
+
     $socket.Close()
-    
+
 } catch {
     $_
     $remoteSocket.Close()

@@ -8,6 +8,7 @@ Author: @OperativeThunny ( bluesky @verboten.zip )
 Date: 20230727
 Last Mod: 1 Aug 2023
 
+LICENSE: AGPLv3 you MUST release all source code using this for all the things including server side only stuff!
 
 https://xkln.net/blog/multithreading-in-powershell--running-a-specific-number-of-threads/
 #>

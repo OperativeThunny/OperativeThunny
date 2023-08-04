@@ -241,7 +241,8 @@ try {
                         # Write-Output "We done goofed. Lets go back to listening for new connections."
                         break # TODO: see the todo above about being in a scriptblock.
                     }
-                } else {
+                } #end checking local R -> remote W
+                else {
                     # Write-Output "No data to move from local to remote socket."
                 }
     # ^^ inbound TCP connection -> outbound TCP connection ^^

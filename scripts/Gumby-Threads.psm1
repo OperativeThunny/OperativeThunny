@@ -284,6 +284,7 @@ class GumbyThreadJeffe : System.IDisposable {
 
     <#
     .SYNOPSIS
+        Smashes the class instance, killing all threads, and returns the results.
         Wait for all threads to complete and return the results.
         HULK_SMASH for killing all threads, terminate all threads forcefully, first closing completed threads.
     #>
@@ -307,9 +308,7 @@ class GumbyThreadJeffe : System.IDisposable {
 
     [void] Dispose() {
         $this.HULK_SMASH()
-        $this.GumbyBody.Dispose()
-        $this.GumbySessionState.Dispose()
-        $this.GumbyPool.Dispose()
+        ([System.Management.Automation.Runspaces.RunspacePool]$this.GumbyPool).Dispose()
     }
 }
 

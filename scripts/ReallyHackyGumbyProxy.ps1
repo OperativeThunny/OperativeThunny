@@ -254,7 +254,7 @@ return $false
             $response.KeepAlive = $false
             $response.StatusCode = 200
             $response.StatusDescription = "OK"
-            $response.ContentLength64 = $responseBytes.Length # If we don't set the content length manually, then it gets automatically set or something?
+            $response.ContentLength64 = $responseBytes.Length # If we don't set the content length manually, then it gets automatically set or something? (me, later: no it needs to be set.)
             $response.ContentType = "text/html"
             $response.OutputStream.Write($responseBytes, 0, $responseBytes.Length)
             $response.Headers.Set([System.Net.HttpResponseHeader]::Server, "GumbyProxy Alpha")
@@ -263,12 +263,12 @@ return $false
             return "Local request not proxying."
         }
 
-# TODO: function for special case corrections goes here
+        # TODO: NOTE: function for special case corrections goes here
         if ($destinationHost -eq "i.imgur.com") {
             $destinationHost = "somethingelse.example.com"
             $destinationPort = 443
             $connectionScheme = "https"
-            $SHAREPOINT_OVERRIDE = $true
+            $SHAREPOINT_OVERRIDE = $true # TODO: change this variable once file is complete.
         }
 
         # ignore favicon
@@ -281,114 +281,241 @@ return $false
         }
 
         $FinalDestination = "$($connectionScheme)://$($destinationHost):$($destinationPort)$($destinationPathAndQuery)"
-        Write-Output "Constructed final destination url: $($FinalDestination)"
 
         # Do not bother with the cache if the get parameter has been added to the URL to bypass cache.
         $IgnoreCache = $null -ne $Global:CACHE_IGNORE_GET_PARAM -and $FinalDestination.IndexOf("$($Global:CACHE_IGNORE_GET_PARAM)") -gt -1
 
         if (!$IgnoreCache -and $Global:CACHE_ENABLED) {
-#TODO: Continue writing the changes on monday
-#TODO: Continue writing the changes on monday
-#TODO: Continue writing the changes on monday
-#TODO: Continue writing the changes on monday
-#TODO: Continue writing the changes on monday
-#TODO: Continue writing the changes on monday
-#TODO: Continue writing the changes on monday
-#TODO: Continue writing the changes on monday
-#TODO: Continue writing the changes on monday
-#TODO: Continue writing the changes on monday
-#TODO: Continue writing the changes on monday
-#TODO: Continue writing the changes on monday
-#TODO: Continue writing the changes on monday
-#TODO: Continue writing the changes on monday
-#TODO: Continue writing the changes on monday
-#TODO: Continue writing the changes on monday
-exit -99
-#TODO: Continue writing the changes on monday
-#TODO: Continue writing the changes on monday
-#TODO: Continue writing the changes on monday
-#TODO: Continue writing the changes on monday
-#TODO: Continue writing the changes on monday
-#TODO: Continue writing the changes on monday
-#TODO: Continue writing the changes on monday
-#TODO: Continue writing the changes on monday
-#TODO: Continue writing the changes on monday
-#TODO: Continue writing the changes on monday
-#TODO: Continue writing the changes on monday
-#TODO: Continue writing the changes on monday
-#TODO: Continue writing the changes on monday
-#TODO: Continue writing the changes on monday
-#TODO: Continue writing the changes on monday
+            if (!($Global:HASHER_SINGLETON)) {
+                $Global:HASHER_SINGLETON = [System.Security.Cryptography.SHA256]::Create()
+            }
+            $hasher = $Global:HASHER_SINGLETON
+            if ($null -eq $Global:CACHE_DIR) {
+                Write-Error "The cache is enabled and we are to cache, but the cache directory is null. Terminating."
+                exit -66
+            }
 
-        # get hash of host and url to use as a key for the cache directory.
-        $hasher = [System.Security.Cryptography.SHA256]::Create() # TODO: make this a singleton object to avoid the overhead of creating it for every request.
-        $rawhash = $hasher.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($FinalDestination))
-        $hash = $([System.BitConverter]::ToString($rawhash).Replace("-", '').ToLower())
-        $hashPrefix = $hash.Substring(0, 2)
+            # get hash of host and url to use as a key for the cache directory:
+            $rawhash = $hasher.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($FinalDestination))
+            $hash = $([System.BitConverter]::ToString($rawhash).Replace("-", '').ToLower())
+            $hashPrefix = $hash.Substring(0, 2)
+            $hmux = $false
+            try {
+                $mux = [System.Threading.Mutex]::new($false, "CreateCacheMutexDictionary") # TODO: Singleton this so we don't have to create a new mutex every time.
+                $hmux = $mux.WaitOne([System.Threading.Timeout]::Infinite, $false) | Out-Null
+                if (!($Global:CacheFileMutexDictionary)) {
+                    $Global:CacheFileMutexDictionary = [System.Collections.Generic.Dictionary[string, System.Threading.Mutex]]@{}
+                }
+                if (!($Global:CacheFileMutexDictionary.ContainsKey($hashPrefix))) {
+                    $gotExistingMut = $false
+                    $mutPossible = [System.Threading.Mutex]::TryOpenExisting($hash, [ref]$gotExistingMut)
+                    if (!$gotExistingMut) {
+                        $Global::CacheFileMutexDictionary[$hash] = [System.Threading.Mutex]::new($false, $hash)
+                    } else {
+                        $Global:CacheFileMutexDictionary[$hash] = $mutPossible
+                    }
+                }
+                $CacheFileMutexInstance = $Global:CacheFileMutexDictionary[$hash] # [System.Threading.Mutex]::new($false, $hash)
+            } catch {
+                $_
+            } finally {
+                if ($hmux){
+                    $mux.ReleaseMutex()
+                    $mux.Dispose()
+                }
+            }
 
-        $cacheRoot = $Global:CACHE_DIR
-        # TODO: Handle race condition possibilities here for creating the cache directory and file, possibly using some sort of promise if promises are in powershell?
-        $cacheDir = "$($cacheRoot)/$($hashPrefix)"
-        $cacheFile = "$($cacheDir)/$($hash)"
+            if ($null -eq $CacheFileMutexInstance) {
+                Write-Error "oops we dont have a mutex!"
+                exit -66
+            }
 
-        if (-not (Test-Path -Path $cacheDir)) {
-            Write-Output "Creating cache directory: $cacheDir"
-            New-Item -Path $cacheDir -ItemType Directory | Out-Null
+            $cacheRoot = $Global:CACHE_DIR
+            # TODO: Handle race condition possibilities here for creating the cache directory and file, possibly using some sort of promise if promises are in powershell?
+            $cacheDir = "$($cacheRoot)/$($hashPrefix)"
+            $cacheFile = "$($cacheDir)/$($hash)"
+            $CacheContentTypesFile = "$($cacheDir)/000001ContentTypes.txt"
+
+            if (-not (Test-Path -Path $cacheDir)) {
+                Write-Output "Creating cache directory: $cacheDir"
+                New-Item -Path $cacheDir -ItemType Directory | Out-Null
+            }
+
+            if ((Test-Path -Path $cacheFile)) {
+                [System.Boolean]$hasCacheFileMutex = $false
+                try {
+                    [System.Boolean]$hasCacheFileMutex = $CacheFileMutexInstance.WaitOne([System.Threading.Timeout]::Infinite, $false) | Out-Null
+
+                    $response.ContentType = "text/html"
+                    if (Test-Path $CacheContentTypesFile) {
+                        $contentTypeMap = Get-Content $CacheContentTypesFile | ConvertFrom-StringData
+                        if ($contentTypeMap.ContainsKey($hash)) {
+                            $response.ContentType = $contentTypeMap[$hash]
+                        } else {
+                            Write-Host -BackgroundColor Red "Defaulting to text/html content type $($hash) :: $($FinalDestination) :-> $($cacheFile) :("
+                        }
+                    }
+
+                    # The file exists, return it directly to the response stream and return.
+                    # TODO: handle cache invalidation {insert meme about the two hardest things in computer science being naming things, counting, and cache invalidation}
+                    [System.IO.FileStream]$responseFileStream = [System.IO.File]::OpenRead($cacheFile)
+                    $response.StatusCode = 200
+                    $response.StatusDescription = "OK"
+                    $response.ContentEncoding = [System.Text.Encoding]::UTF8 # TODO: change this for things like images and other binary content.
+                    $response.KeepAlive = $true
+                    $response.Headers.Set([System.Net.HttpRequestHeader]::Server, "GumbyProxy Alpha")
+                    $response.ContentLength64 = $responseFileStream.Length
+                    $bytesCopied = Copy-Stream ([System.IO.Stream]($responseFileStream)) ([System.IO.Stream]($response.OutputStream))
+                    $response.OutputStream.Flush()
+                    $responseFileStream.Close()
+
+                    if ($bytesCopied -ne $responseFileStream.Length) {
+                        Write-Error "For some reason the amount of bytes in the cache file was not the same as the number of bytes copied to the output stream.... idk man something is weird up in this fine establishment."
+                    }
+
+                    if ($response.OutputStream.CanWrite) {
+                        $response.Close()
+                    } else {
+                        Write-Error "Unable to close response after writing cached content to response stream."
+                    }
+                } catch {
+                    Write-Error "ERROR WRITING RESPONSE IN FILE EXISTS $($response.ContentType) = $($FinalDestination) :: $($hash) :-> $($cacheFile) :("
+                } finally {
+                    if ($hasCacheFileMutex) { # TODO: For some reason this finally block never gets executed and we occasionally get failures in acquiring mutexes after a long runtime duration because the mutex was abandoned by a previous thread somehow.
+                        $CacheFileMutexInstance.ReleaseMutex()
+                    }
+                }
+
+
+                # TODO: If the cache is older than X {time unit} then go ahead and grab the content from the server and update the cache file after we have already returned the cached content to the client.
+                return @{
+                    result = $true
+                    message = "CACHE Successful proxy"
+                } # RETURN
+            } # end cache file exisetence check
         }
 
-        if (-not (Test-Path -Path $cacheFile)) {
-            Write-Output "Creating cache file: $cacheFile"
-            #New-Item -Path $cacheFile -ItemType File | Out-Null
-            # Create the cached response only after we successfully get it.
-        } else {
-            # The file exists, return it directly to the response stream and return.
-            # TODO: handle cache invalidation {insert meme about the two hardest things in computer science being naming things, counting, and cache invalidation}
-            Write-Output "The cache file exists, returning it directly to the response stream and returning."
-            $response.StatusCode = 200
-            $response.StatusDescription = "OK"
-            $responseStream = [System.IO.File]::OpenRead($cacheFile)
-            $responseStream.CopyTo($response.OutputStream)
-            $responseStream.Close()
-            $context.Response.Close()
-
-            # TODO: If the cache is older than X {time unit} then go ahead and grab the content from the server and update the cache file after we have already returned the cached content to the client.
-            return $true
-        }
 
 
 
         # Create a new HTTP request to the original destination
-        $proxyRequest = [WebRequest]::Create($FinalDestination)
-        # Don't use WebRequest or its derived classes for new development. Instead, use the System.Net.Http.HttpClient class.
-        # TODO: Replace WebRequest with HttpClient.
-        # TODO: Also look into System.Net.WebClient
-        # See https://learn.microsoft.com/en-us/dotnet/api/system.net.webrequest?view=net-7.0
-        #$client = [System.Net.Http.HttpClient]::new()
-
-        #$proxyRequest = [System.Net.HttpWebRequest]::Create("http://${destinationHost}:${destinationPort}" + $context.Request.Url.PathAndQuery)
-
-        $proxyRequest.Method = $context.Request.HttpMethod
-        $proxyRequest.ContentType = $context.Request.ContentType
-        $proxyRequest.Credentials = [System.Net.CredentialCache]::DefaultNetworkCredentials
-        $proxyRequest.UseDefaultCredentials = $true
-        $proxyRequest.Timeout = (15 * 1000) # 15 seconds, this timout property is defined in milliseconds.
-
-        # Copy headers from the original request to the proxy request
-        # TODO: Handle headers that will cause this to break.
-        $borkedHeaders = "Host", "Connection", "User-Agent"
-        foreach ($header in $context.Request.Headers) {
-            if ( ($borkedHeaders -ne $header).Length -ne $borkedHeaders.Length) {
-                $proxyRequest.Headers.Add($header, $context.Request.Headers[$header])
-            }
-        }
-
+# This is where the request to the final destination server is made, so I put these pound signs here to make it more impactful {to notice later while scrolling code} :)
+##############################################################################
+        # Get the response from the original destination
+        $IgnoredHeadersString = @"
+Host
+Connection
+User-Agent
+Content-Length
+Accept
+Transfer-Encoding
+Referer
+Accept-Encoding
+KeepAlive
+Close
+Upgrade-Insecure-Requests
+X-FRAME-OPTIONS
+Persistent-Auth
+X-Content-Type-Options
+Strict-Transport-Security
+Sec-Fetch-Dest
+Sec-Fetch-Mode
+Sec-Fetch-Site
+Sec-Fetch-User
+sec-ch-ua
+sec-ch-ua-mobile
+sec-ch-ua-platform
+"@
+        #$ignoredHeaders = "Host", "Connection", "User-Agent", "Content-Length"
+        $ignoredHeaders = (((($IgnoredHeadersString -replace "`r", "") -split "`n") | Where-Object { $_.Trim() -ne "" }) -join ",") -split ","
         try {
-            if ($context.Request.ContentLength64 -gt 0) {
-                $proxyRequest.ContentLength = $context.Request.ContentLength64
-                $context.Request.InputStream.CopyTo($proxyRequest.GetRequestStream()) # TODO: actually test this??
+            if (!($Global:SESSION_SINGLETON)) { # This has to be shared between threads. TODO: Validate the comment.
+                $Global:SESSION_SINGLETON = [Microsoft.PowerShell.Commands.WebRequestSession]::new()
+                Write-Error "GLOBAL SESSION SINGLETON MISSING!"
             }
-            # TODO: Error handling for this line. if this explodes we need to send an error to the client and THEN close the connection.
-            $proxyResponse = $proxyRequest.GetResponse()
+            $session = $Global:SESSION_SINGLETON
+            # TODO: This is bad. I guess we will have to (eventually^(tm)) figure out some method of session differentiation for different clients or different actual web session sin the browser of the same client. (future me: sorry in advance)
+            $session.UserAgent = $request.UserAgent
+            [System.Collections.Generic.Dictionary[string,string]]$headersDictionary = $([System.Linq.Enumerable]::ToDictionary(
+                [System.Linq.Enumerable]::Where(
+                    $request.Headers.AllKeys,
+                    [Func[string,bool]]{param($v) (($ignoredHeaders -ne $v).Length -eq $ignoredHeaders.Length) }
+                ),
+                [Func[string,string]]{param($v) $v },
+                [Func[string,string]]{param($v) $request.Headers[$v] }
+            ))
+
+            # We have to deal with the cookies for some reason that I dont know, the domain field was blank....
+            try {
+                ForEach ($cookie in $request.Cookies.GetEnumerator()) {
+                    ([System.Net.Cookie]$cookie).Domain = $destinationHost # WHY??????? WHY IS THIS BLANK BEFORE HERE????
+                    # I just realized its because coming from the client request, no domain information is sent for the cookies because the server doesn't care about it, it just wants all the cookies the client will send it.
+                    $session.Cookies.Add([System.Net.Cookie]$cookie)
+                }
+            } catch {
+                $_
+                $_.Exception
+                $_.InvocationInfo
+                $_.Exception.Source
+                $_.ScriptStackTrace
+                $_.ErrorDetails
+                throw $_
+            }
+
+            foreach ($header in $headersDictionary.Keys) {
+                Write-Output "REQUEST HEADER: $($header):=> $($headersDictionary[$header])"
+            }
+
+            if ($request.HttpMethod -ne "GET") {
+                # TODO: Other HTTP Verbs. The verb is verboten
+                Write-Error "Method was not GET, dunno how to proceed my guy $($request)"
+                return $null # returning null to the handler dispatch func for it to keep trying other handler functions if any others are defined.
+                # Guard clause FTW!
+            }
+
+            #if ($request.HttpMethod -eq "GET") {
+            $ProgressPreference = "SilentlyContinue"
+            # This can't be
+            # [Microsoft.PowerShell.Commands.BasicHtmlWebResponseObject]
+            # or
+            # [Microsoft.PowerShell.Commands.HtmlWebResponseObject]
+            # because for requests other than for a web page such as images, these object types will not be returned by the invoke-webrequest cmdlet.
+            # because, for images for example, not everything returned from te IWR cmdlet is that class
+            [Microsoft.PowerShell.Commands.WebResponseObject]$proxyResponse = Invoke-WebRequest `
+                -UseBasicParsing `
+                -UseDefaultCredentials `
+                -DisableKeepAlive `
+                -UserAgent $request.UserAgent `
+                -TimeoutSec 60 `
+                -Uri "$($FinalDestination)" `
+                -Headers $headersDictionary `
+                -WebSession $session
+
+            if ($SHAREPOINT_OVERRIDE -and (($proxyResponse.Headers["Content-Type"]).IndexOf("text/html") -gt -1) -and (($proxyResponse.RawContent.IndexOf("Document was created with the newer version of the form template") -gt -1) -or (($proxyResponse.RawContent.IndexOf("Schema validation found non-datatype errors.")) -gt -1) -or ($proxyResponse.RawContent.IndexOf("There has been an error while loading the form") -gt -1)) ) {
+                # Redo the requeset because it is one of the broken sharepoint responses for the infopath form
+                Write-Error "We done diggity dog goniit we gotta POST after GET :("
+                [Microsoft.PowerShell.Commands.WebResponseObject]$proxyResponse = Invoke-WebRequest `
+                    -UseBasicParsing `
+                    -UseDefaultCredentials `
+                    -DisableKeepAlive `
+                    -UserAgent $request.UserAgent `
+                    -TimeoutSec 120 `
+                    -Uri "$($FinalDestination)" `
+                    -Headers $headersDictionary `
+                    -WebSession $session `
+                    -Method POST `
+                    -ContentType "multipart/form-data; boundary=----WebKitFormBoundarytbV4bcE0wmdl3qbS" `
+                    -Body ([System.Text.Encoding]::UTF8.GetBytes("------WebKitFormBoundarytbV4bcE0wmdl3qbS$([char]13)$([char]10)Content-Disposition: form-data; name=`"FormControl_InfoPathContinueLoading`"$([char]13)$([char]10)$([char]13)$([char]10)1$([char]13)$([char]10)------WebKitFormBoundarytbV4bcE0wmdl3qbS$([char]13)$([char]10)"))
+
+                if ((($proxyResponse.RawContent.IndexOf("Schema validation found non-datatype errors.")) -gt -1) -or ($proxyResponse.RawContent.IndexOf("There has been an error while loading the form") -gt -1) ) {
+                    Write-Error "We are really really oopsed on this one!"
+                    Write-Error $FinalDestination
+                    Write-Error $cacheDir
+                    Write-Output "Error with $($FinalDestination) :: $($cacheDir)"
+                    Write-Output "Cache directory attempted: $($cacheDir)"
+                }
+            }
+            #} # end if GET
         } catch {
             Write-Error "Failed to get response from destination server. '$($FinalDestination)': $($_.Exception.Message)"
             #$htout = [System.IO.StreamWriter]::new($context.Response.OutputStream)
@@ -396,23 +523,58 @@ exit -99
             $ErrMsgToClient += $("YOU DONE MESSED UP A-A-RON!`n$(`"=`"*80)`n'$($FinalDestination)': $($_.Exception.Message)")
             $ErrMsgToClient += $("`nΩ`n")
             $ErrMsgToClient += $("⌠")
-            $ErrMsgToClient += $("| x dx = x^2 + C")
+            $ErrMsgToClient += $("| x dx = .5*x^2 + C")
             $ErrMsgToClient += $("⌡")
             $ErrMsgToClient += $("`n`n")
             $ErrMsgToClient += $($_.Exception.Source.Line)
+            $ErrMsgToClient += $("`n`n")
+            $ErrMsgToClient += $($_.Exception.Message)
+            $ErrMsgToClient += $("`n`n")
+            $ErrMsgToClient += $($_.Exception)
+            $ErrMsgToClient += $("`n`n")
+            $ErrMsgToClient += $($_.Exception.InnerException)
             $ErrMsgToClient += $("`n`n")
             $ErrMsgToClient += $($_.Exception.Source)
             $ErrMsgToClient += $("`n`n")
             $ErrMsgToClient += $($_.Exception.StackTrace)
             $ErrMsgToClient += $("`n`n`n§")
-            $BytesToClient = [System.Text.Encoding]::UTF8.GetBytes($ErrMsgToClient -join "`n")
-            $response.OutputStream.Write($BytesToClient, 0, $BytesToClient.Length)
-            $response.ContentLength64 = $BytesToClient.Length
-            $response.StatusDescription = "Internal Server Error"
-            $response.StatusCode = 500
-            $response.OutputStream.Flush()
-            $response.Close()
-            return "Failed to get response from destination server. '$($FinalDestination)': $($_.Exception.Message)"
+            # $BytesToClient = [System.Text.Encoding]::UTF8.GetBytes($ErrMsgToClient -join "`n")
+            # $response.OutputStream.Write($BytesToClient, 0, $BytesToClient.Length)
+            # $response.ContentLength64 = $BytesToClient.Length
+            # $response.StatusDescription = "Internal Server Error"
+            # $response.StatusCode = 500
+            # $response.OutputStream.Flush()
+            # $response.Close()
+            # return "Failed to get response from destination server. '$($FinalDestination)': $($_.Exception.Message)"
+# TODO: this.
+# TODO: this.
+# TODO: this.
+# TODO: this.
+# TODO: this.
+# TODO: this.
+# TODO: this.
+# TODO: this.
+# TODO: this.
+# TODO: this.
+# TODO: this.
+# TODO: this.
+# TODO: this.
+# TODO: this.
+# TODO: this.
+# TODO: this.
+# TODO: this.
+# TODO: this.
+# TODO: this.
+# TODO: this.
+# TODO: this.
+# TODO: this.
+# TODO: this.
+# TODO: this.
+# TODO: this.
+# TODO: this.
+# TODO: this.
+# TODO: this.
+
         }
         # Copy headers from the proxy response to the original response
         foreach ($header in $proxyResponse.Headers) {

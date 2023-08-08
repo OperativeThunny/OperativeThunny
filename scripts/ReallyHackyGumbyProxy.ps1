@@ -344,7 +344,7 @@ return $false
             if ((Test-Path -Path $cacheFile)) {
                 [System.Boolean]$hasCacheFileMutex = $false
                 try {
-                    [System.Boolean]$hasCacheFileMutex = $CacheFileMutexInstance.WaitOne([System.Threading.Timeout]::Infinite, $false) | Out-Null
+                    [System.Boolean]$hasCacheFileMutex = $CacheFileMutexInstance.WaitOne([System.Threading.Timeout]::Infinite, $false)# | Out-Null # figured out while transcribing this is why the mutexes were getting abandoned lol...
 
                     $response.ContentType = "text/html"
                     if (Test-Path $CacheContentTypesFile) {
@@ -546,104 +546,257 @@ sec-ch-ua-platform
             # $response.OutputStream.Flush()
             # $response.Close()
             # return "Failed to get response from destination server. '$($FinalDestination)': $($_.Exception.Message)"
-# TODO: this.
-# TODO: this.
-# TODO: this.
-# TODO: this.
-# TODO: this.
-# TODO: this.
-# TODO: this.
-# TODO: this.
-# TODO: this.
-# TODO: this.
-# TODO: this.
-# TODO: this.
-# TODO: this.
-# TODO: this.
-# TODO: this.
-# TODO: this.
-# TODO: this.
-# TODO: this.
-# TODO: this.
-# TODO: this.
-# TODO: this.
-# TODO: this.
-# TODO: this.
-# TODO: this.
-# TODO: this.
-# TODO: this.
-# TODO: this.
-# TODO: this.
-
+            [System.Net.WebException]$webEx = $_ -as [System.Net.WebException]
+            if ($null -ne $webEx) {
+                $webEx.Response | ConvertTo-Json
+                $webEx.Status | ConvertTo-Json
+                $ErrMsgToClient += "Web exception occurred: "
+                $ErrMsgToClient += $($webEx.Response | ConvertTo-Json)
+                $ErrMsgToClient += $($webEx.Status   | ConvertTo-Json)
+            }
+            $ErrMsgToClient = $ErrMsgToClient -join "`n"
+            [byte[]]$BytesToClient = [System.Text.Encoding]::UTF8.GetBytes($ErrMsgToClient)
+            $response.ContentType = "text/plain"
+            $response.KeepAlive = $false
+            $response.ContentLength64 = $BytesToClient.Count
+            $response.StatusCode = 418
+            $response.StatusDescription = "I am a teapot. Soy una tetera. Je suis une théière. Ich bin eine Teekanne."
+            $response.OutputStream.Write($BytesToClient, 0, $BytesToClient.Length)
+            $response.Headers.Set([System.Net.HttpResponseHeader]::Server, "GumbyProxy Alpha")
+            $response.Close()
+            return $false
         }
+#########################################################################
         # Copy headers from the proxy response to the original response
-        foreach ($header in $proxyResponse.Headers) {
-            $context.Response.Headers.Add($header, $proxyResponse.Headers[$header])
+        #$ignoredHeaders = "Host", "Connection", "User-Agent", "Content-Length"
+        $ignoredHeaders = @"
+Content-Length
+Connection
+Transfer-Encoding
+Upgrade-Insecure-Requests
+X-FRAME-OPTIONS
+Persistent-Auth
+X-Content-Type-Options
+Strict-Transport-Security
+"@
+        $ignoredHeaders = (((($ignoredHeaders -replace "`r", "") -split "`n") | Where-Object { $_.Trim() -ne "" }) -join ",") -split ","
+        foreach ($header in $proxyResponse.Headers.Keys) {
+            #Write-Output "RESPonSE HEADER $($header): $($proxyResponse.Headers[$header])"
+            if ($ignoredHeaders -notcontains $header) {
+                $response.Headers.Set($header, $proxyResponse.Headers[$header])
+            }
+        }
+
+        # Add any cookies from a set cookie header to the cookie jar.
+        # TODO: THIS IS BEYOND INSECURE. FOR THE LOVE OF ALL THAT IS HOLY DO NOT USE THIS IN A CONTINUOUSLY RUNNING PRODUCTION SITUATION.
+exit -99 # here for the github so people dont accidently blindly use this script.
+        # TODO: this is obviously really bad for security....
+        $cookiesToSetUnsecure = $proxyResponse.Headers["Set-Cookie"]
+        if ($null -ne $cookiesToSetUnsecure) {
+            # Strip secure and httponly...........
+            if ($cookiesToSetUnsecure -isnot [string]) {
+                foreach ($setCookie in $cookiesToSetUnsecure.Keys) {
+                    $replacement = $cookiesToSetUnsecure[$setCookie] #-replace "; Secure", "" -replace "; HttpOnly", ""
+                    $replacement = $replacement.Replace(" secure;", "")
+                    $replacement = $replacement.Replace(" Secure;", "")
+                    $replacement = $replacement.Replace(" httponly;", "")
+                    $replacement = $replacement.Replace(" HttpOnly;", "")
+                    $replacement = $replacement.Replace(" HttpOnly", "")
+                    $cookiesToSetUnsecure[$setCookie] = $replacement
+                }
+            } else {
+                $replacement = $cookiesToSetUnsecure.Replace(" secure;", "") #-replace "; Secure", "" -replace "; HttpOnly", ""
+                $replacement = $replacement.Replace(" Secure;", "")
+                $replacement = $replacement.Replace(" httponly;", "")
+                $replacement = $replacement.Replace(" HttpOnly;", "")
+                $cookiesToSetUnsecure = $replacement
+            }
+
+            $response.Headers["Set-Cookie"] = $cookiesToSetUnsecure
+
+            $CookieInfoObject =
+            $session.Cookies.GetType().InvokeMember(
+                'm_domainTable',
+                [System.Reflection.BindingFlags]::GetField -bor [System.Reflection.BindingFlags]::NonPublic -bor [System.Reflection.BindingFlags]::Instance,
+                $null,
+                $session.Cookies,
+                @()) # TODO: I know this is an atrocity, a crime against humanity, to use reflection in this way and this is not portable and could break on a .net framework update.
+            if ($null -eq $CookieInfoObject) {
+                Write-Error "I know this is an atrocity, a crime against humanity, to use reflection in this way and this is not portable and could break on a .net framework update."
+            }
+            ForEach ($cook in $CookieInfoObject.Keys) {
+                ForEach ($path in $CookieInfoObject[$cook].Values) { #This is a PathList type, a private class in the implementation from the .net framework.
+                    ForEach ($actualCookies in [System.Net.CookieCollection]$path) {
+                        [System.Net.Cookie]$monster = $actualCookies
+                        $monster.Secure = $false
+                        $monster.HttpOnly = $false
+                        $session.Cookies.Add([System.Net.Cookie]$monster)
+                    }
+                }
+            }
         }
 
         # Create two copies of the response stream, send one to the client, and save one to the cache.
-        $stream = $proxyResponse.GetResponseStream()
 
-        # clear the file if it exists cuz we went through the trouble of getting the response stream already.
-        if (Test-Path -Path $cacheFile) {
-            [System.IO.File]::Delete($cacheFile)
+        # $Global:SESSION_SINGLETON = $session
+        $response.ContentEncoding = [System.Text.Encoding]::UTF8
+        $response.ContentType = $proxyResponse.Headers["Content-Type"]
+        if ($proxyResponse.Headers["Transfer-Encoding"] -match "chunked") {
+            $response.SendChunked = $true
         }
-        $cacheStream = [System.IO.File]::OpenWrite($cacheFile)
-        $stream.CopyTo($cacheStream)
-        $cacheStream.Close()
-        $stream.Close()
+        if ($FinalDestination.IndexOf("css") -gt -1) {
+            $response.ContentType = "text/css"
+        }
 
-        $cacheFileReadStream = [System.IO.File]::OpenRead($cacheFile)
-        $cacheFileReadStream.CopyTo($context.Response.OutputStream)
-        $context.Response.OutputStream.Flush()
-        $context.Response.OutputStream.Close()
-        $context.Response.Close()
+        $stream = $proxyResponse.RawContentStream
 
-        return $true
-    }
-    catch {
+        # IMPORTANT: don't try to mess with images.
+        # Peform hostname string replacements in the response to ensure the client can correctly load all assets of the webpage through this proxy:
+        if (!($response.ContentType.IndexOf("image") -gt -1) -and $SHAREPOINT_OVERRIDE ) {
+            # find and replace {redacted} strings with ones that re-reference the original destination.
+            #[byte[]] $searchBuffer = [byte[]]::new(16KB)
+            [byte[]] $searchBuffer = [byte[]]::new(161993)
+            [System.IO.MemoryStream] $memStream = [System.IO.MemoryStream]::new(161993)
+            [uint32]$read = [uint32]0
+
+            while ( ($read = $stream.Read($searchBuffer, 0, $searchBuffer.Length)) -gt 0) {
+                # TODO: This iwll fail if the string is split across a buffer boundry, but maybe I dont have to deal with handling that for this specific usage... (message for future me: sorry)
+                #Write-Output "Read $($read) bytes from stream to replace"
+                [string]$buffStr = [System.Text.Encoding]::UTF8.GetString($searchBuffer, 0, $read) # this might do an allocation... oh well its already F'd anyway from not handling the special case
+                if ($buffStr.IndexOf("realhost.example.com") -gt -1) {
+                    $buffStr = $buffStr.Replace("https://realhost.example.com:12345", "http://$($destinationHost):8080")
+                    $buffStr = $buffStr.Replace("https:\/\/realhost.example.com:12345", "http:\/\/$($destinationHost):8080")
+                    $buffStr = $buffStr.Replace("https:\u002f\u002frealhost.example.com:12345", "http:\u002f\u002f$($destinationHost):8080")
+                    $buffStr = $buffStr.Replace("realhost.example.com\u003a12345", "$($destinationHost)\u003a8080")
+                    $buffStr = $buffStr.Replace("realhost.example.com%3a12345", "$($destinationHost)%3a8080")
+                    $buffStr = $buffStr.Replace("realhost.example.com:12345", "$($destinationHost):8080")
+                }
+                # fix error html in the xml responses:
+                #$buffStr = $buffStr.Replace("%3c%2fa>", "</a>")
+                if ($buffStr -ne ($buffStr = $buffStr.Replace("%3c%2fa>", "</a>"))) {
+                    Write-Error "derp derp derp we made a error html replacement!"
+                    Write-Error "Replaced %3c%2fa> with </a>"
+                }
+                [byte[]] $replacedStrBytes = [System.Text.Encoding]::UTF8.GetBytes($buffStr)
+                $memStream.Write($replacedStrBytes, 0, $replacedStrBytes.Length)
+            }
+            $memStream.Seek(0, [System.IO.SeekOrigin]::Begin) | Out-Null
+            $stream = $memStream
+        }
+
+        if (!$ignoreCache -and $Global:CACHE_ENABLED) {
+            # clear the file if it exists cuz we went through the trouble of getting the response stream already.
+            if (Test-Path -Path $cacheFile) {
+                #[System.IO.File]::Delete($cacheFile)
+                #Remove-Item $cacheFile
+                Write-Error "The cache file exists, and we made it to the point where we want to write the cache file, so something weird happened.`n`n$($response.ContentType) = $($FinalDestination) :: $($hash) :-> $($cacheFile) :("
+            }
+
+            [System.Boolean]$hasHandle = $false
+            try {
+                #$cacheFileReadStream = [System.IO.File]::OpenRead($cacheFile)
+                #$cacheFileReadStream.CopyTo($response.OutputStream)
+                [System.Boolean]$hasHandle = $CacheFileMutexInstance.WaitOne([System.Threading.Timeout]::Infinite, $false)# | Out-Null # wow the out null is why the mutexes were occasionally being zombied... weird...
+                "$($hash)=$($response.ContentType)" | Out-File -FilePath $CacheContentTypesFile -Append
+                $cacheStream = [System.IO.File]::OpenWrite($cacheFile)
+                $bytesCopied = Copy-Stream ([System.IO.Stream]($stream)) ([System.IO.Stream]($cacheStream))
+                $cacheStream.Close()
+                $response.ContentLength64 = $bytesCopied
+                $stream.Seek(0, [System.IO.SeekOrigin]::Begin) | Out-Null
+                Copy-Stream ($stream) ($response.OutputStream) | Out-Null
+                $cacheStream.Close()
+                $stream.Close()
+            } catch {
+                Write-Error "Unable to write response to the client (THIS IS AT THE VERY END OF THE HANDLER AFTER HANDLING SPECIAL CASES FOR THE EXACT INSTANTIATION OF THIS SCRIPT): $($FinalDestination) :: $($hash) :-> $($cacheFile) :("
+                $_
+                $_.Exception
+                $_.Exception.Source
+                Write-Error $_
+            } finally {
+                #Write-Output "pre release mutex $($hasHandle.GetType().FullName) $($hasHandle) <-- has handle??"
+                if ($hasHandle) {
+                    Write-Output "Release Mutex!!!!!!!!!!!!!!"
+                    $CacheFileMutexInstance.ReleaseMutex() | Out-Null
+                }
+            }
+        } else {
+            Write-Host -Back Red "We don't need no stinking cache!"
+            $stream.CopyTo($response.OutputStream) # TODO: Replace this with the copy stream cmdlet.
+        }
+        $response.Headers.Set([System.Net.HttpResponseHeader]::Server, "GumbyProxy Alpha")
+        $response.OutputStream.Flush()
+        $response.OutputStream.Close()
+        $response.Close()
+
+        return [PSCustomObject]@{
+            result = $true
+            message = "Successful completion of proxying request."
+        }
+    } catch {
         # Handle any exceptions that occur during the proxying process
-        $htout = [System.IO.StreamWriter]::new($context.Response.OutputStream)
-        #$htout = $context.Response.OutputStream
-        $htout.WriteLine("YOU DONE MESSED UP, A-A-RON (There was an error handling a proxied request/response):")
-        $htout.WriteLine($_.Exception.Message)
-        $htout.WriteLine($_)
-        $htout.Flush()
+        $resp  = [string[]]@()
+        $resp += $("(There was an error handling a proxied request/response):")
+        $resp += $($_.Exception.Message)
+        $resp += $($_.Exception.Source)
+        $resp += $($_.Exception.Source.Line)
+        [byte[]]$rbytes = [System.Text.Encoding]::UTF8.GetBytes(($resp -join "`n====`n"))
+        $response.Headers.Set([System.Net.HttpResponseHeader]::Server, "GumbyProxy Alpha")
         $context.Response.StatusCode = 500
+        $response.KeepAlive = $false
+        $response.ContentLength64 = $rbytes.Count
+        $response.OutputStream.Write($rbytes, 0, $rbytes.Length)
+        $response.OutputStream.Flush()
         $context.Response.Close()
         return $_
+    } finally {
+#        "Finally block at the end of the proxy handler."
     }
-    finally {
-        $context.Response.Close()
-    }
-
-    if ($null -ne $context) {
-        $context.Response.Dispose()
-    }
-
-    return "Completed handling of request but we have not returned anything at this point. so something borked."
+    return $null # return null here so the handler dispatch function can try other handlers if any are defined.
 })
 
 
 
 try {
     # Create an HTTP listener and start it
-    $listener = [HttpListener]::new()
-    # TODO: Prefixes and SSL certs should be configurable from the command line.
-    # $listener.Prefixes.Add("http://127.0.0.1:8080/")
-    # $listener.Prefixes.Add("http://localhost:8080/") # This will need to be used for the windows use case, and it will need to be added to the hosts file for domains to proxy.
-    $listener.Prefixes.Add("http://*:8080/") # This makes the script work for explicit proxy use on linux, but it does not work on Windows without admin privileges.
-    #$listener.Prefixes.Add("http://0.0.0.0:8080/") # This does not work it explodes idk why.
-
-    [HttpListenerTimeoutManager]$timeoutManager = $listener.TimeoutManager
-    $timeoutManager.DrainEntityBody = [System.TimeSpan]::FromSeconds(120)
-    #$timeoutManager.EntityBody = [System.TimeSpan]::FromSeconds(10) # Not supported on linux.
-    #$timeoutManager.HeaderWait = [System.TimeSpan]::FromSeconds(5) # Not supported on linux.
-    $timeoutManager.IdleConnection = [System.TimeSpan]::FromSeconds(5)
-    #$timeoutManager.MinSendBytesPerSecond = [Int64]150 # Not supported on linux.
-    #$timeoutManager.RequestQueue = [System.TimeSpan]::FromSeconds(5) # Not supported on linux.
-
+    [System.Net.HttpListener]$listener = [System.Net.HttpListener]::new()
+    $listener.Prefixes.Add("http://127.0.0.1:8080/") # you need administrator privileges on windows to make this listen on a non localhost IP reachable from external. probably because this is using HTTP.sys which is a kernel level driver on windows and having kernel level code exposed as a network serviece has not generally worked out well for windows in the past.
+    ([System.Net.HttpListenerTimeoutManager]($listner.TimeoutManager)).DrainEntityBody = [System.TimeSpan]::FromSeconds(120)
+    ([System.Net.HttpListenerTimeoutManager]($listner.TimeoutManager)).EntityBody = [System.TimeSpan]::FromSeconds(50) # NO workie on linux
+    ([System.Net.HttpListenerTimeoutManager]($listner.TimeoutManager)).HeaderWait = [System.TimeSpan]::FromSeconds(55) # NO LINUX
+    ([System.Net.HttpListenerTimeoutManager]($listner.TimeoutManager)).IdleConnection = [System.TimeSpan]::FromSeconds(55)
+    ([System.Net.HttpListenerTimeoutManager]($listner.TimeoutManager)).MinBytesPerSecond = [Int64]150 # No linux
+    ([System.Net.HttpListenerTimeoutManager]($listner.TimeoutManager)).RequestQueue = [System.TimeSpan]::FromSeconds(55) # no linux
     $listener.Start()
+###########################################################################
+###########################################################################
+###########################################################################
+###########################################################################
+###########################################################################
+###########################################################################
+###########################################################################
+###########################################################################
+###########################################################################
+###########################################################################
+###########################################################################
+###########################################################################
+###########################################################################
+###########################################################################
+###########################################################################
+###########################################################################
+###########################################################################
+###########################################################################
+###########################################################################
+###########################################################################
+###########################################################################
+###########################################################################
+###########################################################################
+###########################################################################
+###########################################################################
+###########################################################################
+###########################################################################
+###########################################################################
+###########################################################################
+###########################################################################
 
     Write-Host "Proxy server started. Listening on $($listener.Prefixes -join ', ')"
     Write-Host "Press Ctrl+C to stop the proxy server."

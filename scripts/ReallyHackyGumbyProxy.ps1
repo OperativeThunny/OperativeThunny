@@ -21,11 +21,11 @@ $CACHE_DIR = "./cache"
 $CACHE_ENABLED = $true
 $CACHE_IGNORE_GET_PARAM = 'GumbyIgnoreCache'
 $PROXY_REQUEST_TIMEOUT = 60 # seconds passed to the invoke-webrequest command for timeout connecting to remote host.
-
+# TODO: fix this for not powershell 5.1 : https://github.com/PowerShell/PowerShell/issues/7092
 $code = @"
 using System.Net;
 using System.Security.Cryptography.X509Certificates;
-public class TrustAllCertsPolicy : ICertificatePolicy {
+public class TrustAllCertsPolicy : System.Net.ICertificatePolicy {
     public bool CheckValidationResult(
         ServicePoint srvPoint, X509Certificate certificate,
         WebRequest request, int certificateProblem) {

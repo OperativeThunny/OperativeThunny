@@ -11,6 +11,12 @@ GCI C:\source -recurse | Group-Object -Property Directory |
  Sort-Object -Property Size -Descending
 #>
 
+using module ./Gumby-Threads.psm1
+
+Set-StrictMode -Version latest
+Set-PSDebug -Strict
+
+
 $CACHE_DIR = "./cache"
 $CACHE_ENABLED = $true
 $CACHE_IGNORE_GET_PARAM = 'GumbyIgnoreCache'
@@ -767,57 +773,72 @@ try {
     ([System.Net.HttpListenerTimeoutManager]($listner.TimeoutManager)).MinBytesPerSecond = [Int64]150 # No linux
     ([System.Net.HttpListenerTimeoutManager]($listner.TimeoutManager)).RequestQueue = [System.TimeSpan]::FromSeconds(55) # no linux
     $listener.Start()
-###########################################################################
-###########################################################################
-###########################################################################
-###########################################################################
-###########################################################################
-###########################################################################
-###########################################################################
-###########################################################################
-###########################################################################
-###########################################################################
-###########################################################################
-###########################################################################
-###########################################################################
-###########################################################################
-###########################################################################
-###########################################################################
-###########################################################################
-###########################################################################
-###########################################################################
-###########################################################################
-###########################################################################
-###########################################################################
-###########################################################################
-###########################################################################
-###########################################################################
-###########################################################################
-###########################################################################
-###########################################################################
-###########################################################################
-###########################################################################
 
     Write-Host "Proxy server started. Listening on $($listener.Prefixes -join ', ')"
     Write-Host "Press Ctrl+C to stop the proxy server."
 
-    [scriptblock[]] $handlersArray = [scriptblock[]]@($proxyRequest)
+    [scriptblock[]] $handlerArray = [scriptblock[]]@($proxyRequest)
+    [System.Management.Automation.Runspaces.InitialSessionState]$InitialSessionStateInstance = [System.Management.Automation.Runspaces.InitialSessionState]::CreateDefault()
+
+    # todo: hashmap with variable_name => value and loop over making new sessionstatevariableentries for each one and adding them to the init state.
+    $sussySes = [System.Management.Automation.Runspaces.SessionStateVariableEntry]::new(
+        "SESSION_SINGLETON",
+        [Microsoft.PowerShell.Commands.WebRequestSession]::new(),
+        "this is a description field and I don't know why it is here!"
+    )
+    $cdir = [System.Management.Automation.Runspaces.SessionStateVariableEntry]::new(
+        "CACHE_DIR",
+        $CACHE_DIR,
+        "this is a description field and I don't know why it is here!"
+    )
+    $cenabled = [System.Management.Automation.Runspaces.SessionStateVariableEntry]::new(
+        "CACHE_ENABLED",
+        $CACHE_ENABLED,
+        "this is a description field and I don't know why it is here!"
+    )
+    $ptimeout = [System.Management.Automation.Runspaces.SessionStateVariableEntry]::new(
+        "PROXY_REQUEST_TIMEOUT",
+        $PROXY_REQUEST_TIMEOUT,
+        "this is a description field and I don't know why it is here!"
+    )
+    # $hasherinst = [System.Management.Automation.Runspaces.SessionStateVariableEntry]::new(
+    #     "HASHER_SINGLETON",
+    #     $HASHER_SINGLETON,
+    #     "this is a description field and I don't know why it is here!"
+    # )
+    $cignore = [System.Management.Automation.Runspaces.SessionStateVariableEntry]::new(
+        "CACHE_IGNORE_GET_PARAM",
+        $CACHE_IGNORE_GET_PARAM,
+        "this is a description field and I don't know why it is here!"
+    )
+    $InitialSessionStateInstance.Variables.Add($sussySes)
+    $InitialSessionStateInstance.Variables.Add($cdir)
+    $InitialSessionStateInstance.Variables.Add($cenabled)
+    $InitialSessionStateInstance.Variables.Add($ptimeout)
+    #$InitialSessionStateInstance.Variables.Add($hasherinst)
+    $InitialSessionStateInstance.Variables.Add($cignore)
+    $ThreadManager = [GumbyThreadJeffe]::new($handleIndividualRequest, 100, 10, $InitialSessionStateInstance, $host)
 
     while ($listener.IsListening) {
+        $ThreadManager.GumbyStreams()
+        $ThreadManager.GumbyMerge()
+
         # Dispatch a thread to handle the request
-        # TODO: Figure out how to set the jobs to automatically output stdout to console and close and remove on their own or have the get job receive job be done asynch, maybe even in another job??
         Write-Host -BackgroundColor Green "Waiting for connection..."
         # TODO: There is a bug that when the script first starts the first two http requests have to come in slowly, or else for some reason it breaks. If a couple requests come in with a minimum time delta of .25 seconds things seem to work, then after that if I change the testing script to have no sleeps in it, then the script works appropriatly.
-        # TODO: Handle the possibility of a filesystem race condition if two requests for the same URL come in fast and the cache does not already exist, that will have to be handled before spawning a thread to handle the request.
-        [HttpListenerContext]$context = [HttpListenerContext]$(await ($listener.GetContextAsync()))
 
-        (Start-ThreadJob -ScriptBlock $handleIndividualRequest -ArgumentList $($context), $($handlersArray) ) | Out-Null
-        #(Invoke-Command -ScriptBlock $handleIndividualRequest -ArgumentList $($context), $($handlersArray) ) # | Out-Null
+        $ThreadManager.GumbySplit( @($(await ($listener.GetContextAsync())), $handlerArray) )
 
+        Write-Host -BackgroundColor Green "======== Finished Thread Output: "
+        $ThreadManager.GumbyStreams()
+        $ThreadManager.GumbyMerge()
+        Write-Host -BackgroundColor Green "================================"
         # Get output and remove jobs that have finished executing (hopefully not the one we just started):
-        Write-Host -BackgroundColor Green "=================== Finished Thread Output: "
-        Get-Job | Where-Object state -in Completed,Blocked,Failed,Stopped,Suspended,AtBreakpoint,Disconnected | Receive-Job -Wait -AutoRemoveJob -Force
-        Write-Host -BackgroundColor Green "============================================"
+        $jobs = (Get-Job | Where-Object state -in Completed,Bloacked,Failed,Stopped,Suspended,AtBreakpoint,Disconnected)
+        if ($null -ne $jobs -and $jobs.Length -gt 0) {
+            Get-Job | Where-Object state -in Completed,Bloacked,Failed,Stopped,Suspended,AtBreakpoint,Disconnected | Receive-Job -Wait -AutoRemoveJob -Force
+        }
+
     }
 } catch {
     Write-Host -BackgroundColor Red "An error occurred while processing the request!"
@@ -849,6 +870,13 @@ finally {
         Write-Host "Removing jorb $($_.Id)... "
         Remove-Job -Force -Job $_
     }
+
+    Write-Host 'HULK SMASH ALL THREADS!'
+
+    $ThreadManager.HULK_SMASH()
+    $ThreadManager = $null
+    [GC]::Collect()
+    [GC]::WaitForPendingFinalizers()
 
     Write-Host 'Done.'
 }

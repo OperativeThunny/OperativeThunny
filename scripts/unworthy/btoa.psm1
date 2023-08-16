@@ -1,7 +1,7 @@
 #!/usr/bin/env pwsh
 <#
 .SYNOPSIS
-    btoa - Base85 encode a file. This is a powershell implementation of the btoa utility. It is not a drop in replacement for the btoa utility.
+    btoa - Base85 encode a file. This is a powershell implementation of the btoa utility.
     Also known as ascii85 encoding.
     base64 is for lusers. base85 is for chads.
 .DESCRIPTION
@@ -36,6 +36,41 @@
       left-angle-bracket <, backslash \, and the single and double quotes '
       & ". Other base-85 encodings like Z85 and RFC 1924 are designed to be
       safe in source code.[4]
+
+    ASCII-85 is short for ASCII base-85. In short, ASCII base-85 encoding
+    produces five ASCII characters for every four bytes of binary data. The
+    first step of the encoding process converts each group of four binary input
+    bytes to a group of five binary output bytes using the following
+    mathematical relation:
+
+    $$  (b_1 * 256^3) + (b_2 * 256^2) + (b_3 * 256) + b_4 = (c_1 * 85^4) + (c_2 * 85^3) + (c_3 * 85^2) + (c_4 * 85) + c_5  $$
+
+    In other words, four bytes of binary data are interpreted as a base-256
+    number and then converted to a base-85 number. The second step of the
+    encoding process converts the five bytes of the base85 number to five
+    seven-bit ASCII characters by adding 33 to each byte. The resulting encoded
+    data will contain only printable ASCII characters with codes in the range
+    33(!) to 117(u). As a special case, if all five bytes of the base-85 number
+    are zero, they are represented by a single character code of 122(z).
+
+    If the length of the binary data to be encoded is not a multiple of four
+    bytes, the last partial group of four bytes is used to produce a last
+    partial group of five output characters. Given one, two, or three bytes of
+    binary data (n bytes), the encoder first appends enough zero bytes to make
+    it a complete group of four bytes (4-n zero bytes) and then encodes the roup
+    in the usual way (but without applying the special z case). The encoder then
+    writes only the first n characters of the resulting group of five bytes.
+    Finally, the characters ~> are appended to the encoded data to act as an end
+    of data (EOD) marker.
+
+    The decode process is the inverse of the encode process with two
+    differences. The first being that white space characters (spaces, new-lines,
+    carriage-returns, and tabs) are ignored. This allows the encoded data to be
+    broken into lines of manageable length. The second difference is that the
+    decoder will adjust the final byte (incrementing it by one) to overcome the
+    truncation error that occurs when the lenght of the original binary data is
+    not a multiple of four bytes.
+
 .NOTES
     https://en.wikipedia.org/wiki/Ascii85
 .LINK
@@ -80,7 +115,7 @@ function btoa {
     $OutputFile = "testingbtoa.txt"
     $testInput = "Man is distinguished, not only by his reason, but by this singular passion from other animals, which is a lust of the mind, that by a perseverance of delight in the continued and indefatigable generation of knowledge, exceeds the short vehemence of any carnal pleasure."
     # Testing string to match wiki
-    $inbytes = $testInput.ToCharArray() | ForEach-Object { [byte]$_ }
+    $inbytes = [byte[]]([char[]]$testInput.ToCharArray())# | ForEach-Object { [byte]$_ }
 
 $expectedOutput = "
 9jqo^BlbD-BleB1DJ+*+F(f,q/0JhKF<GL>Cj@.4Gp`$d7F!,L7@<6@)/0JDEF<G%<+EV:2F!,O<
@@ -133,12 +168,12 @@ D.RTpAKYo'+CT/5+Cei#DII?(E,9)oF*2M7/c" -replace "`n", "" -replace "`r", ""
     $EncodedString | Format-Hex
     $expectedOutput | Format-Hex
     $EncodedString
-    $expectedOutput 
+    $expectedOutput
     $EncodedString.Length
     $expectedOutput.Length
 
     [System.Text.Encoding]::ASCII.GetString([System.Convert]::GetBytes($expectedOutput))
-    
+
     assert($expectedOutput.Equals($EncodedString), "Expected output does not match actual output.")
     #$outbytes = [System.Text.Encoding]::ASCII.GetBytes($outsb.ToString())
 

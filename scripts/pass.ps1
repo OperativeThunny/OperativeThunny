@@ -11,22 +11,6 @@ Requirements:
     Uses hardware x.509 PKI smartcards to encrypt master key and sign encrypted
       DB.
 
-
-OperativeThunny scripts
-Copyright (C) 2023 @OperativeThunny
-
-This program is free software: you can redistribute it and/or modify
-it under the terms of the GNU Affero General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-This program is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU Affero General Public License for more details.
-
-You should have received a copy of the GNU Affero General Public License
-along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #>
 <#
 .SYNOPSIS
@@ -75,6 +59,16 @@ param(
     [string]
     $NewEntryName = $null
 )
+
+$Global:KDF_N = 100000
+
+if ($null -ne $env:KDF_N -and $env:KDF_N -is [System.UInt64] -or $env:KDF_N -is [System.Int32]) {
+    $Global:KDF_N = $env:KDF_N
+}
+
+($Global:KDF_N).GetType().Name
+
+exit -99
 <#
 upper: 65 66 67 68 69 70 71 72 73 74 75 76 77 78 79 80 81 82 83 84 85 86 87 88 89 90
 numeric: 48 49 50 51 52 53 54 55 56 57
@@ -136,26 +130,37 @@ $AsciiCharacterClasses = [ordered]@{
 # Could be a simple one liner but since we are dealing with passwords, we should probably make sure it is generated in a cryptographically secure way:
 [System.Security.Cryptography.RandomNumberGenerator]$rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
 [byte[]]$randomPasswordSeedBytes = [byte[]]::new($Length)
+[byte[]]$randomPasswordSeedRegen = [byte[]]::new($Length)
 [byte[]]$randomPasswordIndicies = [byte[]]::new($Length)
 [char[]]$randomPasswordChars = [char[]]::new($Length)
 
 $rng.GetBytes($randomPasswordSeedBytes, 0, $Length)
 $alphabetLen = $AllCharacterClasses.Length
+$totalRegens = 0
 
 for ([int] $i = 0; $i -lt $Length; $i++) {
     $curRnd = $randomPasswordSeedBytes[$i]
 
-    if ($curRnd -lt $alphabetLen) {
-        $randomPasswordIndicies[$i] = $curRnd
-        $randomPasswordChars[$i] = $AllCharacterClasses[$curRnd]
-    } else {
+    if ($curRnd -ge $alphabetLen) {
         #$randomPasswordIndicies[$i] = $curRnd % $alphabetLen # straight mod biases towards zero and bias is bad in cryptoland
-        $randomIndex = Get-Random -SetSeed $curRnd -Minimum 0 -Maximum $alphabetLen # I really dont know if this is any better than straight mod but according to this, straight mod is not cryptographically secure even used with a cryptographically secure input: https://crypto.stackexchange.com/questions/7996/correct-way-to-map-random-number-to-defined-range
-        $randomPasswordIndicies[$i] = $randomIndex
-        $randomPasswordChars[$i] = $AllCharacterClasses[$randomIndex]
-    }
-}
+        # $randomIndex = Get-Random -SetSeed $curRnd -Minimum 0 -Maximum $alphabetLen # I really dont know if this is any better than straight mod but according to this, straight mod is not cryptographically secure even used with a cryptographically secure input: https://crypto.stackexchange.com/questions/7996/correct-way-to-map-random-number-to-defined-range
+        # $randomPasswordIndicies[$i] = $randomIndex
+        # $randomPasswordChars[$i] = $AllCharacterClasses[$randomIndex]
+        # Maybe this will be better, to keep regenerating a random buffer until a byte at our current index is less than the array bounds:
+        $regenIterations = 0
+        do {
+            $rng.GetBytes($randomPasswordSeedRegen, 0, $randomPasswordSeedRegen.Length)
+            $curRnd = $randomPasswordSeedRegen[$i]
+            $regenIterations++
+        } while ($curRnd -ge $alphabetLen) # What is the probability this loop is non-terminating, forever?
 
+ #       Write-Debug "We had to regenerate random bytes $($regenIterations) times for index $($i)."
+        $totalRegens += $regenIterations
+    }
+    $randomPasswordIndicies[$i] = $curRnd
+    $randomPasswordChars[$i] = $AllCharacterClasses[$curRnd]
+}
+#Write-Debug "We had to regenerate random bytes $($totalRegens) times for this password!"
 $randomPassword = [string]::new($randomPasswordChars)
 
 if ($Operation -eq "generate") {
@@ -191,23 +196,23 @@ $passwordEntry = [ordered]@{
     password = $randomPassword
 }
 
-#$passwordEntry | ConvertTo-Json
-
-
 
 if(!(Test-Path $DatabaseFile)) {
     [byte[]]$ppbytes = [byte[]]::new(32)
     [byte[]]$ppsalt = [System.Byte[]]::new(32)
     $rng.GetBytes($ppsalt, 0, $ppsalt.Length)
+    $rng.GetBytes($ppbytes, 0, $ppbytes.Length)
 
-    $keygen = [System.Security.Cryptography.Rfc2898DeriveBytes]::new($ppbytes, $ppsalt, 100000)
+    $keygen = [System.Security.Cryptography.Rfc2898DeriveBytes]::new($ppbytes, $ppsalt, $Global:KDF_N)
     $masterkey = $keygen.GetBytes(32)
 
     $pwdb = @{
-        MasterKey = $masterkey
+        MasterKey = $ppbytes
+        MasterSalt = $ppsalt
+        DerivedMasterKey = $masterkey
         Entries = @($passwordEntry)
+        EncryptedEntries = $null
     }
-    $cleartextjson = $pwdb | ConvertTo-Json
 <#
 
 how we doin dis? we doin dis this way:

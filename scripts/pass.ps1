@@ -57,18 +57,27 @@ param(
     [Parameter(Mandatory=$false,
                Position=4)]
     [string]
-    $NewEntryName = $null
+    $NewEntryName = $null,
+
+    [Parameter(Mandatory=$false,
+               Position=5)]
+    [string]
+    $NewEntryDescription = $null,
+
+    [Parameter(Mandatory=$false,
+               Position=6)]
+    [UInt64]
+    $KeyDerivationIterations = 100000
 )
 
-$Global:KDF_N = 100000
-
-if ($null -ne $env:KDF_N -and $env:KDF_N -is [System.UInt64] -or $env:KDF_N -is [System.Int32]) {
-    $Global:KDF_N = $env:KDF_N
+if ($KeyDerivationIterations -lt 1000) {
+    Write-Error "Key derivatrion function iterations is less than 1k! This is not recommended!"
+    if (!(Read-Host -Prompt "Do you want to continue. Enter 'yes' to continue, anything else to exit.").ToLower().Trim().Equals("yes")) {
+        Write-Error "Exiting."
+        exit -99
+    }
 }
 
-($Global:KDF_N).GetType().Name
-
-exit -99
 <#
 upper: 65 66 67 68 69 70 71 72 73 74 75 76 77 78 79 80 81 82 83 84 85 86 87 88 89 90
 numeric: 48 49 50 51 52 53 54 55 56 57
@@ -180,6 +189,9 @@ Write-Host -BackgroundColor Green "The generated password is {{{{$randomPassword
 
 if ($PromptForName) {
     $pwname = Read-Host -Prompt "What would you like to name this password?"
+    if ($null -eq $NewEntryDescription) {
+        $NewEntryDescription = Read-Host -Prompt "What would you like to add to the encrypted description for this password?`n`n"
+    }
 } else {
     $pwname = $NewEntryName
 
@@ -188,13 +200,50 @@ if ($PromptForName) {
         $pwname = New-Guid
     }
 }
-
+<#
 $passwordEntry = [ordered]@{
     sequence = 0
     id = New-Guid
     name = $pwname
     password = $randomPassword
+    secure_note = $NewEntryDescription
 }
+#>
+
+class PasswordEntry {
+    [string]$sequence
+    [string]$id
+    [string]$name
+    [string]$password
+    [string]$secure_note
+
+    PasswordEntry() {
+        $this.sequence = 0
+        $this.id = New-Guid
+        $this.name = New-Guid
+        $this.password = ""
+        $this.secure_note = ""
+    }
+
+    PasswordEntry([string]$sequence, [string]$id, [string]$name, [string]$password, [string]$secure_note) {
+        $this.sequence = $sequence
+        $this.id = if ($null -eq $id) { New-Guid } else { $id }
+        $this.name = if ($null -eq $name) { New-Guid } else { $name }
+        $this.password = $password
+        $this.secure_note = $secure_note
+    }
+}
+
+class PasswordDatabase {
+    [byte[]]$MasterKey
+    [byte[]]$MasterSalt
+    [byte[]]$DerivedMasterKey
+    [System.Collections.Generic.Dictionary[string, PasswordEntry]]$Entries
+    [byte[]]$EncryptedEntries
+}
+
+$passwordEntry = [PasswordEntry]::new(0, $null, $pwname, $randomPassword, $NewEntryDescription)
+
 
 
 if(!(Test-Path $DatabaseFile)) {
@@ -203,7 +252,7 @@ if(!(Test-Path $DatabaseFile)) {
     $rng.GetBytes($ppsalt, 0, $ppsalt.Length)
     $rng.GetBytes($ppbytes, 0, $ppbytes.Length)
 
-    $keygen = [System.Security.Cryptography.Rfc2898DeriveBytes]::new($ppbytes, $ppsalt, $Global:KDF_N)
+    $keygen = [System.Security.Cryptography.Rfc2898DeriveBytes]::new($ppbytes, $ppsalt, $KeyDerivationIterations)
     $masterkey = $keygen.GetBytes(32)
 
     $pwdb = @{
@@ -230,7 +279,6 @@ TODO: full json doc encryption and signature
 
 #>
 
-
     #$masterkey | Format-Hex
     # TODO: Encryption...
     # $keygen = [System.Security.Cryptography.Rfc2898DeriveBytes]::new($ppbytes, 64, 10000)
@@ -244,4 +292,3 @@ TODO: full json doc encryption and signature
     $pwdb = $ciphertextjson | ConvertFrom-Json
     $passwordEntry.sequence = $pwdb.Length
 }
-

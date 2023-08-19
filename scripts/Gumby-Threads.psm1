@@ -79,6 +79,8 @@ function Test-GumbyThread() {
     $GumbyThread = [GumbyThread]::new($GumbyPool, $GumbyBody, $GumbyParams)
     $GumbyThread.Join()
     $GumbyThread.Dispose()
+    $GumbyPool.Close()
+    $GumbyPool.Dispose()
 }
 
 class GumbyThread : System.IDisposable {
@@ -147,7 +149,7 @@ class GumbyThread : System.IDisposable {
             $threadResult.GetType().FullName
             $this.Dispose()
             return $threadResult
-        }
+        } else {}
 
         return $null # Maybe return PSDataCollection[psobject]?
         # TODO: Strictly require pthreads behavior of blocking until done, or no?

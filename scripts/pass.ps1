@@ -121,13 +121,13 @@ $AsciiCharacterClasses = [ordered]@{
 #     "$($k): $($($AsciiCharacterClasses[$k] | %{ $([char]($_)) }) -join "','")"
 # }
 
-[char[]]$AllCharacterClasses =
-  $AsciiCharacterClasses.lowspecials +
-  $AsciiCharacterClasses.numerals +
-  $AsciiCharacterClasses.lowmidspecials +
-  $AsciiCharacterClasses.upperalpha +
-  $AsciiCharacterClasses.highmidspecials +
-  $AsciiCharacterClasses.loweralpha #+
+[char[]]$AllCharacterClasses = @() `
+  + $AsciiCharacterClasses.lowspecials `
+  + $AsciiCharacterClasses.numerals `
+  + $AsciiCharacterClasses.lowmidspecials `
+  + $AsciiCharacterClasses.upperalpha `
+  + $AsciiCharacterClasses.highmidspecials `
+  + $AsciiCharacterClasses.loweralpha `
   #$AsciiCharacterClasses.extendedprintable
 
 #[byte[]]$full = $alphlower + $alphupper + $num + $specials
@@ -238,18 +238,25 @@ $passwordEntry = [PasswordEntry]::new(0, $null, $pwname, [System.Text.Encoding]:
 function E([byte[]]$k, [byte[]]$v) {
     #https://gist.github.com/loadenmb/8254cee0f0287b896a05dcdc8a30042f
     #[byte[]].
-    $k | Add-Member -MemberType ScriptMethod -Name "op_ExclusiveOr" -Value {
-        param($v)
-        [System.Collections.Generic.List[byte]]$ret = [System.Collections.Generic.List[byte]]::new()
-        for($i = 0; $i -lt $v.Length; $i++) {
-            $ret.add($this[$i % $this.Length] -bxor $v[$i])
-        }
-        return $ret.ToArray()
+    # $k | Add-Member -MemberType ScriptMethod -Name "op_ExclusiveOr" -Value {
+    #     param($v) # WTB tutorial ob powershell operator overloading
+    #     [System.Collections.Generic.List[byte]]$ret = [System.Collections.Generic.List[byte]]::new()
+    #     for($i = 0; $i -lt $v.Length; $i++) {
+    #         $ret.add($this[$i % $this.Length] -bxor $v[$i])
+    #     }
+    #     return $ret.ToArray()
+    # }
+    # return $k -bxor $v # lol this is bad its just temporary trust me :D
+
+    for($i = 0; $i -lt $v.Length; $i++) {
+        $v[$i] = $k[$i % $k.Length] -bxor $v[$i]
     }
-    return $k -bxor $v # lol this is bad its just temporary trust me :D
+    return $v
 }
 
-E([byte[]]([char[]]"test"), [byte[]]([char[]]"test"))
+#E [byte[]]([char[]]"test") [byte[]]([char[]]"test")
+
+[System.Text.Encoding]::UTF8.GetBytes($randomPassword) | E $masterkey
 
 if(!(Test-Path $DatabaseFile)) {
     [byte[]]$ppbytes = [byte[]]::new(32) # pp=passphrase :)
@@ -274,10 +281,151 @@ if(!(Test-Path $DatabaseFile)) {
     $Cipher = [AesManaged]::Create()
     $Cipher.BlockSize = 256
     $Cipher.KeySize = 256
-    $Cipher.Mode = [CipherMode]
+    #$Cipher.Mode = [CipherMode]::GCM\ # hmmmmmmmmmm.......... https://gist.github.com/ctigeek/2a56648b923d198a6e60?permalink_comment_id=3794601
+
+    # LOOKS LIKE WE ARE GOING TO IMPLEMENT AES-256-GCM OURSELF BOIS!
+    # https://csrc.nist.rip/groups/ST/toolkit/BCM/documents/proposedmodes/gcm/gcm-spec.pdf
+    # NOTE: THERE IS A VULNERABILITY IF NONCE VALUES ARE RE-USED WITH THE SAME ENCRYPTION KEY! DON'T DO THAT!
+    # https://ludvigknutsmark.github.io/posts/breaking_aes_gcm_part2/
+    # https://github.com/Metalnem/aes-gcm-siv/blob/master/src/Cryptography/AesGcmSiv.cs
+    # https://gist.github.com/Darryl-G/d1039c2407262cb6d735c3e7a730ee86
+    # https://www.it-implementor.co.uk/2021/04/powershell-encrypt-decrypt-openssl-aes256-cbc.html
+    # https://datatracker.ietf.org/doc/html/rfc8452
+    # https://en.wikipedia.org/wiki/AES-GCM-SIV
+    # https://stackoverflow.com/questions/10655026/gcm-multiplication-implementation
+    # https://nvlpubs.nist.gov/nistpubs/Legacy/SP/nistspecialpublication800-38d.pdf
+    #https://github.com/traviscross/bgaes/blob/master/gf128mul.h
 } else {
     $ciphertextjson = Get-Content $DatabaseFile
     # TODO: Decryption...
     $pwdb = $ciphertextjson | ConvertFrom-Json
     $passwordEntry.sequence = $pwdb.Length
 }
+
+<#
+Do not use the same nonce or IV with the same key more than once. This can lead to the same keystream being generated, which in turn leads to the same ciphertext being produced.
+If an attacker detects this, they can recover the plaintext from the ciphertext by XORing the two ciphertexts together.
+NOTE: THERE IS A VULNERABILITY IF NONCE/IV VALUES ARE RE-USED WITH THE SAME ENCRYPTION KEY! DON'T DO THAT!
+It is used by the GCM mode of operation for AES.
+In general it is a block cipher mode of operation that uses a Galois Field multiplication to generate a Message Authentication Code (MAC) for the purposes of AEAD (Authenticated Encryption with Associated Data).
+.LINK
+    https://nvlpubs.nist.gov/nistpubs/Legacy/SP/nistspecialpublication800-38d.pdf
+    https://csrc.nist.rip/groups/ST/toolkit/BCM/documents/proposedmodes/gcm/gcm-spec.pdf
+.LINK
+    https://ludvigknutsmark.github.io/posts/breaking_aes_gcm_part2/
+    https://github.com/Metalnem/aes-gcm-siv/blob/master/src/Cryptography/AesGcmSiv.cs
+    https://gist.github.com/Darryl-G/d1039c2407262cb6d735c3e7a730ee86
+    https://www.it-implementor.co.uk/2021/04/powershell-encrypt-decrypt-openssl-aes256-cbc.html
+    https://datatracker.ietf.org/doc/html/rfc8452
+    https://stackoverflow.com/questions/10655026/gcm-multiplication-implementation
+.NOTES
+<#
+    A	The additional authenticated data
+    C	The ciphertext.
+    H	The hash subkey.
+    ICB	The initial counter block
+    IV	The initialization vector.
+    K	The block cipher key.
+    P	The plaintext.
+    R	The constant within the algorithm for the block multiplication operation.
+    T	The authentication tag.
+    t	The bit length of the authentication tag.
+    0^s	The bit string that consists of s ‘0’ bits.
+#>
+#>
+class GCM {
+    [System.Security.Cryptography.SymmetricAlgorithm]$block_cipher_instance
+
+    hidden [void] Init([System.Security.Cryptography.SymmetricAlgorithm]$block_cipher_instance) {
+        $this.block_cipher_instance = $block_cipher_instance
+    }
+
+    GCM() {
+        $this.Init($null)
+    }
+
+    GCM([System.Security.Cryptography.SymmetricAlgorithm]$block_cipher_instance) {
+        $this.Init($block_cipher_instance)
+    }
+
+    # The output of the forward cipher function of the block cipher under the key K applied to the block X.
+    [byte[]]CIPH($K, $X) {return $null}
+    # The output of the GCTR function for a given block cipher with key K applied to the bit string X with an initial counter block ICB.
+    [byte[]]GCTR($K, $ICB, $X) {return $null}
+    # The output of the GHASH function under the hash subkey H applied to the bit string X.
+    [byte[]]GHASH($H, $X) {return $null}
+
+    <#
+    .SYNOPSIS
+        This is a function that multiplies two 128-bit Galois Field elements.
+    .DESCRIPTION
+        The product of two blocks, X and Y, regarded as elements of a certain binary Galois field.
+        X \cdot Y
+    .INPUTS
+        Two 128-bit Galois Field elements.
+    .OUTPUTS
+        The product of the two 128-bit Galois Field elements.
+    #>
+    [byte[]] GF128Mul([byte[]]$X, [byte[]]$Y) {
+        return $null
+    }
+
+    [byte[]] AE($K, $IV, $P, $A) {
+        return $null
+    }
+
+    [byte[]] AD($K, $IV, $C, $A) {
+        return $null
+    }
+}
+
+<#
+.LINK
+    https://en.wikipedia.org/wiki/AES-GCM-SIV
+    https://datatracker.ietf.org/doc/html/rfc8452
+.NOTES
+3.  POLYVAL
+
+   The GCM-SIV construction is similar to GCM: the block cipher is used
+   in counter mode to encrypt the plaintext, and a polynomial
+   authenticator is used to provide integrity.  The authenticator in
+   GCM-SIV is called POLYVAL.
+
+   POLYVAL, like GHASH (the authenticator in AES-GCM; see [GCM],
+   Section 6.4), operates in a binary field of size 2^128.  The field is
+   defined by the irreducible polynomial x^128 + x^127 + x^126 + x^121 +
+   1.  The sum of any two elements in the field is the result of XORing
+   them.  The product of any two elements is calculated using standard
+   (binary) polynomial multiplication followed by reduction modulo the
+   irreducible polynomial.
+
+   We define another binary operation on elements of the field:
+   dot(a, b), where dot(a, b) = a * b * x^-128.  The value of the field
+   element x^-128 is equal to x^127 + x^124 + x^121 + x^114 + 1.  The
+   result of this multiplication, dot(a, b), is another field element.
+
+   Polynomials in this field are converted to and from 128-bit strings
+   by taking the least significant bit of the first byte to be the
+   coefficient of x^0, the most significant bit of the first byte to be
+   the coefficient of x^7, and so on, until the most significant bit of
+   the last byte is the coefficient of x^127.
+
+   POLYVAL takes a field element, H, and a series of field elements
+   X_1, ..., X_s.  Its result is S_s, where S is defined by the
+   iteration S_0 = 0; S_j = dot(S_{j-1} + X_j, H), for j = 1..s.
+
+   We note that POLYVAL(H, X_1, X_2, ...) is equal to
+   ByteReverse(GHASH(ByteReverse(H) * x, ByteReverse(X_1),
+   ByteReverse(X_2), ...)), where ByteReverse is a function that
+   reverses the order of 16 bytes.  See Appendix A for a more detailed
+   explanation.
+#>
+class GCM_SIV : GCM {
+    hidden [void] Init() {}
+    GCM_SIV() {
+        $this.Init()
+    }
+}
+
+
+

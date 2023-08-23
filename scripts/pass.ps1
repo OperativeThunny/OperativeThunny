@@ -349,12 +349,66 @@ class GCM {
     }
 
     # The output of the forward cipher function of the block cipher under the key K applied to the block X.
-    [byte[]]CIPH($K, $X) {return $null}
-    # The output of the GCTR function for a given block cipher with key K applied to the bit string X with an initial counter block ICB.
-    [byte[]]GCTR($K, $ICB, $X) {return $null}
-    # The output of the GHASH function under the hash subkey H applied to the bit string X.
-    [byte[]]GHASH($H, $X) {return $null}
+    [byte[]]CIPH($K, $X) {
+        $this.block_cipher_instance.Key = $K
+        return $this.block_cipher_instance.EncryptEcb($X, [PaddingMode]::None)
+    }
+    [byte[]]CIPH_K($K, $X) {return CIPH($K,$X)}
 
+    # Given a bit string X and a non-negative integer s such that len(X)≥s, the functions LSB_s(X) and
+    # MSB_s(X) return the s least significant (i.e., right-most) bits and the s most significant (i.e., left-
+    # most) bits, respectively, of X. For example, LSB_3 (111011010) = 010, and
+    # MSB_4 (111011010) = 1110.
+    [byte[]]LSB_s($s, $X) {return $null}
+    [byte[]]MSB_s($s, $X) {return $null}
+    # 6.2 Incrementing Function
+    # For a positive integer s and a bit string X such that len(X)≥s, let the s-bit incrementing function,
+    # denoted incs(X), be defined as follows:
+    # inc_s(X)=MSB_{len(X)-s}(X) || [int(LSB_s(X))+1 mod 2^s]_s
+    # In other words, the function increments the right-most s bits of the string, regarded as the binary
+    # representation of an integer, modulo 2^s; the remaining, left-most len(X)-s bits remain unchanged.
+    [byte[]]inc_s($s, $X) {return $null}
+
+    # 6.3 Multiplication Operation on Blocks
+    # Let R be the bit string 11100001 || 0^120 . Given two blocks X and Y, Algorithm 1 below
+    # computes a “product” block, denoted X•Y:
+    <#
+    Algorithm 1: X•Y
+
+    Input:
+        blocks X, Y.
+
+    Output:
+        block  X• Y.
+
+    Steps:
+    1. Let x_0 x_1...x_127 denote the sequence of bits in X.
+    2. Let Z_0 = 0^128 and V_0 = Y.
+    3. For i = 0 to 127, calculate blocks Zi+1 and Vi+1 as follows:
+
+        Z_{i+1} =
+                    ⎧  Z_i          if x_i = 0;
+                    ⎨  Z_i ⊕ V_i   if x i = 1.
+                    ⎩
+
+        V_{i+1} =
+                    ⎧ V_i >> 1           if LSB_1 (V_i) = 0;
+                    ⎨(V_i >> 1)⊕R       if LSB_1 (V_i) = 1.
+                    ⎩
+
+    4. Return Z_128
+
+    The • operation on (pairs of) the 2^128 possible blocks corresponds to the multiplication operation
+    for the binary Galois (finite) field of 2^128 elements. The fixed block, R, determines a
+    representation of this field as the modular multiplication of binary polynomials of degree less
+    than 128. The convention for interpreting strings as polynomials is “little endian”: i.e., if u is
+    the variable of the polynomial, then the block x_0 x_1...x_127 corresponds to the polynomial x_0 + x_1 u +
+    x_2 u^2 + ... + x_127 u^127. The XOR operation is used to add coefficients of “like” terms during the
+    multiplication. The reduction modulus is the polynomial of degree 128 that corresponds to R || 1.
+    Ref. [6] discusses this field in detail.
+    For a positive integer i, the ith power of a block X with this multiplication operation is denoted
+    X^i. For example, H^2 =H•H, H^3 =H•H•H, etc.
+    #>
     <#
     .SYNOPSIS
         This is a function that multiplies two 128-bit Galois Field elements.
@@ -369,6 +423,14 @@ class GCM {
     [byte[]] GF128Mul([byte[]]$X, [byte[]]$Y) {
         return $null
     }
+
+    # The output of the GHASH function under the hash subkey H applied to the bit string X.
+    [byte[]]GHASH($H, $X) {return $null}
+
+    # The output of the GCTR function for a given block cipher with key K applied to the bit string X with an initial counter block ICB.
+    [byte[]]GCTR($K, $ICB, $X) {return $null}
+
+
 
     [byte[]] AE($K, $IV, $P, $A) {
         return $null

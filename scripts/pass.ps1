@@ -386,14 +386,18 @@ class GCM {
     2. Let Z_0 = 0^128 and V_0 = Y.
     3. For i = 0 to 127, calculate blocks Zi+1 and Vi+1 as follows:
 
+    (((Programmer's note: the extra xor symbol in the first line of each piecewise function below is there intentionally,
+    but is to be discarded as you can tell it is not valid in the context because there is no second operand.
+    it is simply there so the if statements line up perfectly in my current font.)))
+
         Z_{i+1} =
-                    ⎧  Z_i          if x_i = 0;
-                    ⎨  Z_i ⊕ V_i   if x i = 1.
+                    ⎧  Z_i⊕          if x_i = 0;
+                    ⎨  Z_i ⊕ V_i     if x_i = 1.
                     ⎩
 
         V_{i+1} =
-                    ⎧ V_i >> 1           if LSB_1 (V_i) = 0;
-                    ⎨(V_i >> 1)⊕R       if LSB_1 (V_i) = 1.
+                    ⎧ V_i >> 1⊕      if LSB_1 (V_i) = 0;
+                    ⎨(V_i >> 1)⊕R    if LSB_1 (V_i) = 1.
                     ⎩
 
     4. Return Z_128

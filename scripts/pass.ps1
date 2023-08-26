@@ -331,6 +331,7 @@ In general it is a block cipher mode of operation that uses a Galois Field multi
     T	The authentication tag.
     t	The bit length of the authentication tag.
     0^s	The bit string that consists of s ‘0’ bits.
+   X>>1 The bit string that results from discarding the rightmost bit of the bit string X and prepending a ‘0’ bit on the left.
 #>
 #>
 class GCM {
@@ -347,20 +348,63 @@ class GCM {
     GCM([System.Security.Cryptography.SymmetricAlgorithm]$block_cipher_instance) {
         $this.Init($block_cipher_instance)
     }
+#https://stackoverflow.com/questions/38381890/powershell-bytes-to-bit-array
+    static [byte[]] BitToByteArray ( [System.Collections.BitArray]$BitArray ) {
+
+        $numBytes = [System.Math]::Ceiling($BitArray.Count / 8)
+
+        $bytes = [byte[]]::new($numBytes)
+        $byteIndex = 0
+        $bitIndex = 0
+
+        for ($i = 0; $i -lt $BitArray.Count; $i++) {
+            if ($BitArray[$i]) {
+                $bytes[$byteIndex] = $bytes[$byteIndex] -bor (1 -shl (7 - $bitIndex))
+            }
+            $bitIndex++
+            if ($bitIndex -eq 8) {
+                $bitIndex = 0
+                $byteIndex++
+            }
+        }
+
+        return $bytes
+    }
 
     # The output of the forward cipher function of the block cipher under the key K applied to the block X.
-    [byte[]]CIPH($K, $X) {
-        $this.block_cipher_instance.Key = $K
+    # Assumes the key is already set on the block cipher instance.
+    #[byte[]]CIPH($K, $X) {
+    #[System.Collections.Specialized.BitVector32]
+    [byte[]]CIPH_K([byte[]]$X) {
         return $this.block_cipher_instance.EncryptEcb($X, [PaddingMode]::None)
     }
-    [byte[]]CIPH_K($K, $X) {return CIPH($K,$X)}
 
     # Given a bit string X and a non-negative integer s such that len(X)≥s, the functions LSB_s(X) and
     # MSB_s(X) return the s least significant (i.e., right-most) bits and the s most significant (i.e., left-
     # most) bits, respectively, of X. For example, LSB_3 (111011010) = 010, and
     # MSB_4 (111011010) = 1110.
-    [byte[]]LSB_s($s, $X) {return $null}
-    [byte[]]MSB_s($s, $X) {return $null}
+    static [byte[]]LSB_s([System.UInt64]$s, [byte[]]$X) {
+        # TODO: special case for s divisble by 8
+        if ($s % 8 -eq 0) {
+            return $X[0..(($s/8)-1)]
+        } else {
+            $bytes = $X[0..(([Math]::Floor($s/8))-1)]
+            $s = $s % 8
+            # $mask = 0x01
+            # # TODO: instead of building up from zeros, maybe start with all ones and shift right?
+            # for ($i = 0; $i -lt $s-1; $i++) {
+            #     $mask = $mask -bor ($mask -shl 1)
+            # }
+            $mask = 0xFF
+            $mask = $mask -shr (8-$s)
+            $bytes = [byte[]]@([byte[]]$bytes[0..($bytes.Length-1)],($X[-1] -band $mask))
+        }
+        $zuul = $null
+        return $zuul
+    }
+    [byte[]]MSB_s([System.UInt64]$s, [byte[]]$X) {
+        return $null
+    }
     # 6.2 Incrementing Function
     # For a positive integer s and a bit string X such that len(X)≥s, let the s-bit incrementing function,
     # denoted incs(X), be defined as follows:

@@ -50,11 +50,6 @@ function [byte[]]LSB_s([System.UInt64]$s, [byte[]]$X) {
     }
 }
 
-# [BitConverter]::SingleToUint32Bits(0xAB)
-# [BitConverter]::SingleToUint32Bits(0x000000AB)
-# [BitConverter]::ToString(0xAB)
-[Convert]::tostring(0xAB, 2)
-[GCM]::LSB_s(5, $(,0xAB))
 
 
 class GCM {
@@ -114,20 +109,18 @@ class GCM {
     # the polynomial x0 + x1 u + x2 u2 + ... + x127 u 127."
     # so index 0 of the input array X is the rightmost 8 bits in the bit string.
     static [byte[]]LSB_s([System.UInt64]$s, [byte[]]$X) {
-        # TODO: special case for s divisble by 8
         if ($s % 8 -eq 0) {
             return $X[0..(($s/8)-1)]
         } else {
             $bytes = $X[0..(([Math]::Floor($s/8))-1)]
-            $s = $s % 8
-            # $mask = 0x01
-            # # TODO: instead of building up from zeros, maybe start with all ones and shift right?
-            # for ($i = 0; $i -lt $s-1; $i++) {
-            #     $mask = $mask -bor ($mask -shl 1)
-            # }
+
             $mask = 0xFF
             $mask = $mask -shr (8-$s)
-            #$bytes = [byte[]]@([byte[]]$bytes[0..($bytes.Length-1)],($X[-1] -band $mask))
+
+            if ($s -lt 8) {
+                return [byte[]]@($X[0] -band $mask)
+            }
+
             $bytes = ([byte[]]$bytes[0..($bytes.length)] + [byte[]]@( [byte] ($X[-1] -band $mask)))
             return $bytes
         }
@@ -224,53 +217,20 @@ class GCM {
     }
 }
 
-<#
-.LINK
-    https://en.wikipedia.org/wiki/AES-GCM-SIV
-    https://datatracker.ietf.org/doc/html/rfc8452
-.NOTES
-3.  POLYVAL
 
-   The GCM-SIV construction is similar to GCM: the block cipher is used
-   in counter mode to encrypt the plaintext, and a polynomial
-   authenticator is used to provide integrity.  The authenticator in
-   GCM-SIV is called POLYVAL.
 
-   POLYVAL, like GHASH (the authenticator in AES-GCM; see [GCM],
-   Section 6.4), operates in a binary field of size 2^128.  The field is
-   defined by the irreducible polynomial x^128 + x^127 + x^126 + x^121 +
-   1.  The sum of any two elements in the field is the result of XORing
-   them.  The product of any two elements is calculated using standard
-   (binary) polynomial multiplication followed by reduction modulo the
-   irreducible polynomial.
 
-   We define another binary operation on elements of the field:
-   dot(a, b), where dot(a, b) = a * b * x^-128.  The value of the field
-   element x^-128 is equal to x^127 + x^124 + x^121 + x^114 + 1.  The
-   result of this multiplication, dot(a, b), is another field element.
 
-   Polynomials in this field are converted to and from 128-bit strings
-   by taking the least significant bit of the first byte to be the
-   coefficient of x^0, the most significant bit of the first byte to be
-   the coefficient of x^7, and so on, until the most significant bit of
-   the last byte is the coefficient of x^127.
+# [BitConverter]::SingleToUint32Bits(0xAB)
+# [BitConverter]::SingleToUint32Bits(0x000000AB)
+# [BitConverter]::ToString(0xAB)
+[Convert]::ToString(0xAB, 2)
+$result = [GCM]::LSB_s(6, $(,0xAB))
+[Convert]::ToString($result[0], 2) # should be 101011
 
-   POLYVAL takes a field element, H, and a series of field elements
-   X_1, ..., X_s.  Its result is S_s, where S is defined by the
-   iteration S_0 = 0; S_j = dot(S_{j-1} + X_j, H), for j = 1..s.
 
-   We note that POLYVAL(H, X_1, X_2, ...) is equal to
-   ByteReverse(GHASH(ByteReverse(H) * x, ByteReverse(X_1),
-   ByteReverse(X_2), ...)), where ByteReverse is a function that
-   reverses the order of 16 bytes.  See Appendix A for a more detailed
-   explanation.
-#>
-class GCM_SIV : GCM {
-    hidden [void] Init() {}
-    GCM_SIV() {
-        $this.Init()
-    }
-}
+
+
 
 
 

@@ -217,8 +217,8 @@ class GCM {
     }
 }
 
-
-
+#                       0b10101011 0b01001101 0b11101111 0b00010010 0b00110100
+$testVector = [byte[]]@(0xAB,      0xCD,      0xEF,      0x12,      0x34,      0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xF0, 0x12, 0x34, 0x56, 0x78, 0x9A)
 
 
 # [BitConverter]::SingleToUint32Bits(0xAB)
@@ -228,9 +228,15 @@ class GCM {
 $result = [GCM]::LSB_s(6, $(,0xAB))
 [Convert]::ToString($result[0], 2) # should be 101011
 
+$result = [GCM]::LSB_s(8, $testVector)
+[Convert]::ToString($result[0], 16) # should be 0xAB
 
+$result = [GCM]::LSB_s(16, $testVector) # should be 0xAB, 0xCD
+[Convert]::ToString($result[0], 16) + [Convert]::ToString($result[1], 16)
 
+$result = [GCM]::LSB_s(15, $testVector) # should be 0b10101011, 0b01001101 or 1001101 without the 0b prefix and all 8 bits
+($result | %{ [Convert]::ToString($_, 16) }) -join ", " # TODO: TEST FAILURE!!!
+[Convert]::ToString($result[0], 16) + [Convert]::ToString($result[1], 2)
 
-
-
+$result = [GCM]::LSB_s(23, $testVector)
 

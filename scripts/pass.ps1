@@ -8,8 +8,7 @@ Requirements:
     powershell script that works with a default install of windows 10 with
       powershell 5.1 only and no options of installing newer .net core or
       powershell or windows terminal. We are stuck with .net FRAMEWORK 4.8.
-    Uses hardware x.509 PKI smartcards to encrypt master key and sign encrypted
-      DB.
+    Uses hardware x.509 PKI smartcards to encrypt master key and sign encrypted DB.
 
 #>
 <#

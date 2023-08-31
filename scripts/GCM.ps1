@@ -1,13 +1,34 @@
 #!/usr/bin/env pwsh
 <#
-Do not use the same nonce or IV with the same key more than once. This can lead to the same keystream being generated, which in turn leads to the same ciphertext being produced.
-If an attacker detects this, they can recover the plaintext from the ciphertext by XORing the two ciphertexts together.
-NOTE: THERE IS A VULNERABILITY IF NONCE/IV VALUES ARE RE-USED WITH THE SAME ENCRYPTION KEY! DON'T DO THAT!
-It is used by the GCM mode of operation for AES.
-In general it is a block cipher mode of operation that uses a Galois Field multiplication to generate a Message Authentication Code (MAC) for the purposes of AEAD (Authenticated Encryption with Associated Data).
+
+Implementation of the Galois Counter Mode (GCM) for AES in PowerShell.
+
+In general it is a block cipher mode of operation that uses a Galois Field
+multiplication to generate a Message Authentication Code (MAC) for the purposes
+of AEAD (Authenticated Encryption with Associated Data).
+
+This exists because the .NET Framework that comes by default with Windows 10
+does not have a built-in implementation of GCM for AES. I am writing this
+because I want to use GCM with AES in PowerShell and I don't want to have to
+(and do not have admin ability to) install .NET Core or .NET 5+ on my Windows 10
+machine.
+
+Requirements:
+    powershell script that works with a default install of windows 10 with
+      powershell 5.1 only and no options of installing newer .net core or
+      powershell or windows terminal. We are stuck with .net FRAMEWORK 4.8.
+
+Do not use the same nonce or IV with the same key more than once. This can lead
+to the same keystream being generated, which in turn leads to the same
+ciphertext being produced. If an attacker detects this, they can recover the
+plaintext from the ciphertext by XORing the two ciphertexts together. NOTE:
+THERE IS A VULNERABILITY IF NONCE/IV VALUES ARE RE-USED WITH THE SAME ENCRYPTION
+KEY! DON'T DO THAT!
+
 .LINK
     https://nvlpubs.nist.gov/nistpubs/Legacy/SP/nistspecialpublication800-38d.pdf
     https://csrc.nist.rip/groups/ST/toolkit/BCM/documents/proposedmodes/gcm/gcm-spec.pdf
+
 .LINK
     https://ludvigknutsmark.github.io/posts/breaking_aes_gcm_part2/
     https://github.com/Metalnem/aes-gcm-siv/blob/master/src/Cryptography/AesGcmSiv.cs
@@ -15,8 +36,8 @@ In general it is a block cipher mode of operation that uses a Galois Field multi
     https://www.it-implementor.co.uk/2021/04/powershell-encrypt-decrypt-openssl-aes256-cbc.html
     https://datatracker.ietf.org/doc/html/rfc8452
     https://stackoverflow.com/questions/10655026/gcm-multiplication-implementation
+
 .NOTES
-<#
     A	The additional authenticated data
     C	The ciphertext.
     H	The hash subkey.
@@ -28,29 +49,10 @@ In general it is a block cipher mode of operation that uses a Galois Field multi
     T	The authentication tag.
     t	The bit length of the authentication tag.
     0^s	The bit string that consists of s ‘0’ bits.
-   X>>1 The bit string that results from discarding the rightmost bit of the bit string X and prepending a ‘0’ bit on the left.
-#>
+   X>>1	The bit string that results from discarding the rightmost bit of the bit string X and prepending a ‘0’ bit on the left.
 #>
 
 using namespace System.Security.Cryptography
-
-
-
-function [byte[]]LSB_s([System.UInt64]$s, [byte[]]$X) {
-    # TODO: special case for s not divisible by 8 but s is less than 8
-    if ($s % 8 -eq 0) {
-        return $X[0..(($s/8)-1)]
-    } else {
-        $bytes = $X[0..(([Math]::Floor($s/8))-1)]
-        $s = $s % 8
-        $mask = 0xFF
-        $mask = $mask -shr (8-$s)
-        $bytes = ([byte[]]$bytes[0..($bytes.length)] + [byte[]]@( [byte] ($X[-1] -band $mask)))
-        return $bytes
-    }
-}
-
-
 
 class GCM {
     [System.Security.Cryptography.SymmetricAlgorithm]$block_cipher_instance
@@ -219,7 +221,7 @@ class GCM {
 
 #                       0b10101011 0b11001101 0b11101111 0b00010010 0b00110100
 $testVector = [byte[]]@(0xAB,      0xCD,      0xEF,      0x12,      0x34,      0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xF0, 0x12, 0x34, 0x56, 0x78, 0x9A)
-
+. "./CleanCode/"
 
 # [BitConverter]::SingleToUint32Bits(0xAB)
 # [BitConverter]::SingleToUint32Bits(0x000000AB)
@@ -240,3 +242,4 @@ $result = [GCM]::LSB_s(15, $testVector) # should be 0b10101011, 0b01001101 or 10
 
 $result = [GCM]::LSB_s(23, $testVector)
 
+# TODO: assert

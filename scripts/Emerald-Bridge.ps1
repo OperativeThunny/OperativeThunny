@@ -6,8 +6,9 @@ Like a simpler netcat.
 Idk if windows STDIN and STDOUT will be redirectable to a socket like on linux, but we'll give 'er the ol' college try.
 Author: @OperativeThunny ( bluesky @verboten.zip )
 Date: 20230714
-Copyright (C) 2023 Operative Thunny. All rights reserved.
-Eventually a license will be decided upon, but for now all rights reserved.
+Copyright (C) 2023 Operative Thunny.
+Copyright (C) 2023 Operative Thunny. All rights reserved. Eventually a license
+will be decided upon, but for now all rights reserved.
 #>
 
 # Step 1: Parse arguments

@@ -10,6 +10,25 @@ Requirements:
       powershell or windows terminal. We are stuck with .net FRAMEWORK 4.8.
     Uses hardware x.509 PKI smartcards to encrypt master key and sign encrypted DB.
 
+==============================================================================
+Scripts by OperativeThunny - Command line password manager using AES-256-GCM and
+x.509 PKI smartcards
+Copyright (C) 2023 @OperativeThunny
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program.  If not, see <http://www.gnu.org/licenses/>.
+==============================================================================
+
 #>
 <#
 .SYNOPSIS

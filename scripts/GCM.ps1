@@ -19,7 +19,7 @@ Requirements:
       powershell or windows terminal. We are stuck with .net FRAMEWORK 4.8.
 
 ==============================================================================
-Scripts by OperativeThunny
+Scripts by OperativeThunny - Galois Counter Mode (GCM) for AES in PowerShell
 Copyright (C) 2023 @OperativeThunny
 
 This program is free software: you can redistribute it and/or modify

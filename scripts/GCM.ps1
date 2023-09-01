@@ -114,16 +114,29 @@ class GCM {
         if ($s % 8 -eq 0) {
             return $X[0..(($s/8)-1)]
         } else {
-            $bytes = $X[0..(([Math]::Floor($s/8))-1)]
+            $index_of_final_byte = [Math]::Floor($s/8)
 
+            $bytes = $X[0..($index_of_final_byte-1)]
+
+            $new_number_of_bits = $s % 8
             $mask = 0xFF
-            $mask = $mask -shr (8-$s)
+
+            $mask = $mask -shr (8-$new_number_of_bits)
+            #write-host -f red "This is the mask for the final byte of $($s) bits: 0b$([convert]::tostring($mask, 2).PadLeft(8,'0')) or 0x$([convert]::tostring($mask, 16).PadLeft(2,'0'))"
 
             if ($s -lt 8) {
                 return [byte[]]@($X[0] -band $mask)
             }
 
-            $bytes = ([byte[]]$bytes[0..($bytes.length)] + [byte[]]@( [byte] ($X[-1] -band $mask)))
+            $final_byte = [byte]($X[$index_of_final_byte])
+            #Write-host -f red "The last byte is 0b$([convert]::tostring($final_byte,2).padleft(8,'0')) or 0x$([convert]::tostring($final_byte,16).padleft(2,'0'))"
+            $final_byte = [byte]($final_byte -band $mask)
+            #Write-host -f red "The last byte after masking is 0b$([convert]::tostring($final_byte,2).padleft(8,'0')) or 0x$([convert]::tostring($final_byte,16).padleft(2,'0'))"
+            $final_byte_array = [byte[]]@($final_byte)
+            #$final_byte_array = [byte[]]@( [byte] ($X[-1] -band $mask))
+
+            $bytes = ( ([byte[]]$bytes[0..($bytes.length)]) + $final_byte_array )
+
             return $bytes
         }
     }
@@ -219,27 +232,77 @@ class GCM {
     }
 }
 
+
+########################################################
+# TESTS
+<#
+Test vector:          10101011, 11001101, 11101111, 00010010, 00110100, 01010110, 01111000, 10011010, 10111100, 11011110, 11110000, 00010010, 00110100, 01010110, 01111000, 10011010
+Test vector:          ab, cd, ef, 12, 34, 56, 78, 9a, bc, de, f0, 12, 34, 56, 78, 9a
+Test vector reversed: 9a, 78, 56, 34, 12, f0, de, bc, 9a, 78, 56, 34, 12, ef, cd, ab
+Test vector reversed: 10011010, 01111000, 01010110, 00110100, 00010010, 11110000, 11011110, 10111100, 10011010, 01111000, 01010110, 00110100, 00010010, 11101111, 11001101, 10101011
+#>
 #                       0b10101011 0b11001101 0b11101111 0b00010010 0b00110100
 $testVector = [byte[]]@(0xAB,      0xCD,      0xEF,      0x12,      0x34,      0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xF0, 0x12, 0x34, 0x56, 0x78, 0x9A)
-. "./CleanCode/"
+Write-Output "Test vector: $(($testVector | %{ ([Convert]::ToString($_, 2)).PadLeft(8, '0') }) -join ", ")"
+Write-Output "Test vector: $(($testVector | %{ ([Convert]::ToString($_, 16)).PadLeft(2, '0') }) -join ", ")"
+wRITE-oUTPUT "Test vector reversed: $( ($testVector | %{ ([Convert]::ToString($_, 16)) })[($testVector.Length-1)..0] -join ", ")"
+wRITE-oUTPUT "Test vector reversed: $( ($testVector | %{ ([Convert]::ToString($_, 2).PadLeft(8, '0')) })[($testVector.Length-1)..0] -join ", ")"
+# Assertion module from http://cleancode.sourceforge.net/
+Import-Module "./CleanCode/Assertion/Assertion.psm1"
+if (!(Get-Alias -Name assert -ErrorAction SilentlyContinue)) { New-Alias -Name "assert" -Value "Assert-Expression" }
 
 # [BitConverter]::SingleToUint32Bits(0xAB)
 # [BitConverter]::SingleToUint32Bits(0x000000AB)
 # [BitConverter]::ToString(0xAB)
-[Convert]::ToString(0xAB, 2)
-$result = [GCM]::LSB_s(6, $(,0xAB))
-[Convert]::ToString($result[0], 2) # should be 101011
+# [Convert]::ToString(0xAB, 2)
+# $result = [GCM]::LSB_s(6, $(,0xAB))
+# [Convert]::ToString($result[0], 2).PadLeft(8, '0') # should be 00101011
+assert ( [Convert]::ToString( ([GCM]::LSB_s(6, $(,0xAB)))[0], 2).PadLeft(8, '0') ) "00101011" "Least significant 6 bits of 0xAB should be 101011"
 
-$result = [GCM]::LSB_s(8, $testVector)
-[Convert]::ToString($result[0], 16) # should be 0xAB
+# $result = [GCM]::LSB_s(8, $testVector)
+# [Convert]::ToString($result[0], 16) # should be 0xAB
+assert ( [GCM]::LSB_s(8, $testVector)[0] ) 171 "Least significant 8 bits of ( little endian ) 0xAB, 0xCD, ..., 0x9A should be 0xAB"
 
-$result = [GCM]::LSB_s(16, $testVector) # should be 0xAB, 0xCD
-[Convert]::ToString($result[0], 16) + [Convert]::ToString($result[1], 16)
+# $result = [GCM]::LSB_s(16, $testVector) # should be 0xAB, 0xCD
+# [Convert]::ToString($result[0], 16) + [Convert]::ToString($result[1], 16)
+#assert ( $($res = [GCM]::LSB_s(16, $testVector); (($res[1] -shl 8) -bor ($res[0])) ) )  52651 "Least significant 16 bits of ( little endian ) 0xAB, 0xCD, ..., 0x9A should be 0xCDAB"
 
-$result = [GCM]::LSB_s(15, $testVector) # should be 0b10101011, 0b01001101 or 1001101 without the 0b prefix and all 8 bits
-($result | %{ [Convert]::ToString($_, 16) }) -join ", " # TODO: TEST FAILURE!!!
-[Convert]::ToString($result[0], 16) + [Convert]::ToString($result[1], 2)
+# so... this is a bit complicated but you have to think in binary and in types
+# here, and also in little endian. Because it requires this thinking I figured a
+# paragraph of an explanation is needed for this one line test.
+# we are getting a byte array and we need to make sure the bits are right so the
+# first element in little endian will go at the end of our value we are building
+# up, so the rightmost bits, and we need to OR them together so the second byte
+# will be on the left side and if we shift left that 8 bits to make room to OR
+# it with the rightmost bits, since it is a byte it will result in a value of 0,
+# so we have to first cast the second byte to a 16 bit value and then shift it
+# left 8 bits, then or it with the first byte
+assert ( $( ([Uint16]($res = [GCM]::LSB_s(16, $testVector))[1]) -shl 8 -bor $res[0] ) ) 52651 "Least significant 16 bits of ( little endian ) 0xAB, 0xCD, ..., 0x9A should be 0xCDAB"
+assert ( $( ([Uint16]($res = [GCM]::LSB_s(16, $testVector))[1]) -shl 8 -bor $res[0] ) ) 0xCDAB "Least significant 16 bits of ( little endian ) 0xAB, 0xCD, ..., 0x9A should be 0xCDAB"
 
-$result = [GCM]::LSB_s(23, $testVector)
+# ($result = [GCM]::LSB_s(15, $testVector)) # should be 0b10101011, 0b01001101 or 1001101 without the 0b prefix and all 8 bits
+# ($result | %{ [Convert]::ToString($_, 16) }) -join ", " # TODO: TEST FAILURE!!!
+# [Convert]::ToString($result[0], 16) + [Convert]::ToString($result[1], 2)
 
-# TODO: assert
+# PS /workspaces/OperativeThunny/scripts> [convert]::tostring(([byte]0xCD), 2).padleft(8, '0')
+# 11001101
+# PS /workspaces/OperativeThunny/scripts> [convert]::tostring(([byte]0xCD -shr 1), 2).padleft(8, '0')
+# 01100110
+
+#[convert]::tostring(  ((([byte]0xCD) -shl 1) -shr 1), 2).padleft(8, '0')
+[byte[]]$result = [GCM]::LSB_s(15, $testVector)
+
+#([Uint16]$leftByte = [Uint16]([Uint16]$result[1]) -shl 8)
+Write-Output "This is not the correct result: $($result)"
+[Uint16]$leftByte = ([Uint16]($result[1])) -shl 8
+Write-Output "This is the most significant byte that is expected to be modified from the original test vector: 0b$([convert]::tostring($leftByte, 2).padLeft(8, '0')) 0x$([convert]::tostring($leftByte, 16).padLeft(8, '0'))"
+[Uint16]$rightByte = $result[0]
+$finalByte = $leftByte -bor $rightByte
+assert ([convert]::tostring($finalByte, 2).padleft(16, '0')) "0100110110101011" "this no workie"
+
+#[convert]::tostring(  ((([byte]0xCD) -shl 1) -shr 1), 2).padleft(8, '0')
+assert (  [convert]::tostring( ( ((([Uint16] ([byte[]]$res = [GCM]::LSB_s(15, $testVector))[1]) ) -shl 8) -bor [Uint16]$res[0] ), 2 ).padleft(16, '0')  ) "0100110110101011" "the binary value represented by 0xAB, 0xCD (le) aka 0xCDAB is 1100110110101011. So, the fifteen (15) least significant bits (the right most) ov that would be dropping that left most 1, so it would be 0b0100110110101011"
+# assert () 0b0100110110101011 "the binary value represented by 0xAB, 0xCD (le) aka 0xCDAB is 1100110110101011. So, the fifteen (15) least significant bits (the right most) ov that would be dropping that left most 1, so it would be 0b0100110110101011"
+# assert () 0x4dAB
+# assert () 19883
+

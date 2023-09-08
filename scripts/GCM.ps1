@@ -223,10 +223,26 @@ class GCM {
 
         if($LSB.Length -le 8) {
             [UInt64]$LSBi = ([UInt64]([BitConverter]::ToUInt64($LSB, 0)))
-            $LSBi++
+            [UInt64]$LSBi++
             $LSB = [BitConverter]::GetBytes($LSBi)
         } else {
-            # TODO: Convert the LSB to a bit array and increment it.
+            # what we have here is a failure to communicate. I mean, what we
+            # have here is a byte array that is more than 8 bytes long, so it is
+            # bigger than 64 bits. So, we need to increment the bytes in the
+            # array from the right most byte to the left most byte, and if the
+            # byte is 0xFF then we need to set it to 0 and increment the next
+            # byte to the left, and so on until we get to a byte that is not
+            # 0xFF, then we increment that byte by 1 and we are done.
+            [Uint64]$index_to_add_1_to = [Uint64]0
+            [byte]$current_byte_value = ([byte]($LSB[0]))
+            while ($current_byte_value -eq [byte]0xFF -and $index_to_add_1_to -lt $LSB.Length) {
+                $LSB[$index_to_add_1_to] = [byte]0
+                $index_to_add_1_to++
+                $current_byte_value = $LSB[$index_to_add_1_to]
+            }
+            if ($index_to_add_1_to -lt $LSB.Length) {
+                $LSB[$index_to_add_1_to]++
+            }
         }
         return $null
     }

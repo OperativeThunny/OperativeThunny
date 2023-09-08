@@ -85,7 +85,8 @@ class GCM {
     GCM([System.Security.Cryptography.SymmetricAlgorithm]$block_cipher_instance) {
         $this.Init($block_cipher_instance)
     }
-#https://stackoverflow.com/questions/38381890/powershell-bytes-to-bit-array
+
+    #https://stackoverflow.com/questions/38381890/powershell-bytes-to-bit-array
     static [byte[]] BitToByteArray ( [System.Collections.BitArray]$BitArray ) {
 
         $numBytes = [System.Math]::Ceiling($BitArray.Count / 8)
@@ -131,19 +132,20 @@ class GCM {
         if ($s % 8 -eq 0) {
             return $X[0..(($s/8)-1)]
         } else {
-            $index_of_final_byte = [Math]::Floor($s/8)
-
-            $bytes = $X[0..($index_of_final_byte-1)]
-
             $new_number_of_bits = $s % 8
             $mask = 0xFF
-
+            # we get the number of bits that we need to preserve in the, probably, last byte, which will be the right most bits:
             $mask = $mask -shr (8-$new_number_of_bits)
             #write-host -f red "This is the mask for the final byte of $($s) bits: 0b$([convert]::tostring($mask, 2).PadLeft(8,'0')) or 0x$([convert]::tostring($mask, 16).PadLeft(2,'0'))"
 
-            if ($s -lt 8) {
+            if ($s -lt 8) { # it is < instead of <= here because we already handled the case where it is a multiple of 8
                 return [byte[]]@($X[0] -band $mask)
             }
+
+            $index_of_final_byte = [Math]::Floor($s/8)
+
+            # TODO: do the rest of this function without allocating multiple new arrays?
+            $bytes = $X[0..($index_of_final_byte-1)]
 
             $final_byte = [byte]($X[$index_of_final_byte])
             #Write-host -f red "The last byte is 0b$([convert]::tostring($final_byte,2).padleft(8,'0')) or 0x$([convert]::tostring($final_byte,16).padleft(2,'0'))"
@@ -160,9 +162,54 @@ class GCM {
 
     # MSB_s(X) return the s most significant (i.e., left-most) bits, respectively, of X.
     # PRECONDITION: X is a bit string represented in little endian format as a byte array.
+    # EXAMPLE: MSB_4 (111011010) = 1110
+    # WARNING: NOTE: NOTICE:!!!! THIS IS ASSUMING THE NIST SPECIAL PUBLICATION
+    # 800-38D ON PAGE 11 IMPLIES THE MOST SIGNIFICANT BITS RETURNED FROM MSB_s ARE
+    # TO BE INTERPRETED AS THE LEFT MOST BITS IN A 8 BIT BYTE SO 1110 IS TREATED AS
+    # 0b11100000 INSTEAD OF 0b00001110! THIS IS NOT MADE CLEAR IN THE SPECIAL
+    # PUBLICATION!
     static [byte[]]MSB_s([System.UInt64]$s, [byte[]]$X) {
-        Write-Host -f red "S bits: $($s); X length: $($X.Length)"
-        return $X
+        #Write-Host -f red "S bits: $($s); X length: $($X.Length)"
+        if ($s % 8 -eq 0) {
+            #Write-Host -f red "start: $(($X.Length-1)) end: $(($X.Length-($s/8)))"
+            $bytes = $X[($X.Length-1)..($X.Length-($s/8))]
+            #write-host -f red "$($bytes -join ",")"
+            [array]::Reverse($bytes)
+            return $bytes
+        }
+        # At this point we know that $s is not a multiple of 8, so we need to
+        # find out if s is bigger than 8 and get those bytes up to the non even
+        # multiple of 8 then get the last byte and mask it.
+
+        # get the left most number of bits we need to preserve by shifting a
+        # byte of all 1s over to the left and filling in the lower bits with 0s
+        [byte]$mask = ([byte]0xFF) -shl (8-($s % 8))
+
+        #Write-host -f red "The mask of the final byte: 0b$([convert]::tostring($mask, 2).PadLeft(8,'0'))"
+
+        # we need to get the index of the "final" byte, which in this case,
+        # because we are getting the most significant bytes, will be the index
+        # in the array in the direction of the zero index, which is the least
+        # significant byte, so that index will be the array length minus one
+        # (the actual last index) minus the number of most significant bits we
+        # need to get converted to whole bytes, so divide by 8. We can factor
+        # out the calculation of getting the real last index out of the math to
+        # the end to make it look more pretty. We can wrap the whole thing in
+        # parentheses because more parentheticals equals more better.
+        $index_of_final_byte = (($X.Length - [Math]::Floor($s/8)) - 1)
+
+        #Write-Host -f red "Index of final byte in MSB_$($s): $($index_of_final_byte)"
+
+        if ($s -lt 8) { # it is < instead of <= here because we already handled the case where it is a multiple of 8
+            return [byte[]]@( $X[($X.Length-1)] -band $mask )
+        }
+
+        # return all the bytes with all the shizz and stuff:
+        $return_value = [byte[]]@( $X[($X.Length-1)..($index_of_final_byte)] )
+        $return_value[-1] = [byte]($return_value[-1] -band $mask)
+        [array]::Reverse($return_value)
+
+        return $return_value
     }
     # 6.2 Incrementing Function
     # For a positive integer s and a bit string X such that len(X)≥s, let the s-bit incrementing function,
@@ -170,7 +217,19 @@ class GCM {
     # inc_s(X)=MSB_{len(X)-s}(X) || [int(LSB_s(X))+1 mod 2^s]_s
     # In other words, the function increments the right-most s bits of the string, regarded as the binary
     # representation of an integer, modulo 2^s; the remaining, left-most len(X)-s bits remain unchanged.
-    static [byte[]]inc_s($s, $X) {return $null}
+    static [byte[]]inc_s($s, $X) {
+        $MSB = [GCM]::MSB_s((($X.Length*8)-$s), $X)
+        $LSB = [GCM]::LSB_s($s, $X)
+
+        if($LSB.Length -le 8) {
+            [UInt64]$LSBi = ([UInt64]([BitConverter]::ToUInt64($LSB, 0)))
+            $LSBi++
+            $LSB = [BitConverter]::GetBytes($LSBi)
+        } else {
+            # TODO: Convert the LSB to a bit array and increment it.
+        }
+        return $null
+    }
 
     # 6.3 Multiplication Operation on Blocks
     # Let R be the bit string 11100001 || 0^120 . Given two blocks X and Y, Algorithm 1 below
@@ -264,10 +323,10 @@ Test vector reversed: 10011010, 01111000, 01010110, 00110100, 00010010, 11110000
 #>
 #                       0b10101011 0b11001101 0b11101111 0b00010010 0b00110100
 $test_vector = [byte[]]@(0xAB,      0xCD,      0xEF,      0x12,      0x34,      0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xF0, 0x12, 0x34, 0x56, 0x78, 0x9A)
-Write-Output "Test vector: $(($test_vector | %{ ([Convert]::ToString($_, 2)).PadLeft(8, '0') }) -join ", ")"
-Write-Output "Test vector: $(($test_vector | %{ ([Convert]::ToString($_, 16)).PadLeft(2, '0') }) -join ", ")"
-wRITE-oUTPUT "Test vector reversed: $( ($test_vector | %{ ([Convert]::ToString($_, 16)) })[($test_vector.Length-1)..0] -join ", ")"
-wRITE-oUTPUT "Test vector reversed: $( ($test_vector | %{ ([Convert]::ToString($_, 2).PadLeft(8, '0')) })[($test_vector.Length-1)..0] -join ", ")"
+Write-Output "Test vector: $(($test_vector | ForEach-Object{ ([Convert]::ToString($_, 2)).PadLeft(8, '0') }) -join ", ")"
+Write-Output "Test vector: $(($test_vector | ForEach-Object{ ([Convert]::ToString($_, 16)).PadLeft(2, '0') }) -join ", ")"
+Write-Output "Test vector reversed: $( ($test_vector | ForEach-Object{ ([Convert]::ToString($_, 16)) })[($test_vector.Length-1)..0] -join ", ")"
+Write-Output "Test vector reversed: $( ($test_vector | ForEach-Object{ ([Convert]::ToString($_, 2).PadLeft(8, '0')) })[($test_vector.Length-1)..0] -join ", ")"
 # Assertion module from http://cleancode.sourceforge.net/
 Import-Module "./CleanCode/Assertion/Assertion.psm1"
 if (!(Get-Alias -Name assert -ErrorAction SilentlyContinue)) { New-Alias -Name "assert" -Value "Assert-Expression" }
@@ -302,7 +361,7 @@ assert ( $( ([Uint16]($res = [GCM]::LSB_s(16, $test_vector))[1]) -shl 8 -bor $re
 assert ( $( ([Uint16]($res = [GCM]::LSB_s(16, $test_vector))[1]) -shl 8 -bor $res[0] ) ) 0xCDAB "Least significant 16 bits of ( little endian ) 0xAB, 0xCD, ..., 0x9A should be 0xCDAB"
 
 # ($result = [GCM]::LSB_s(15, $test_vector)) # should be 0b10101011, 0b01001101 or 1001101 without the 0b prefix and all 8 bits
-# ($result | %{ [Convert]::ToString($_, 16) }) -join ", " # TODO: TEST FAILURE!!!
+# ($result | ForEach-Object{ [Convert]::ToString($_, 16) }) -join ", "
 # [Convert]::ToString($result[0], 16) + [Convert]::ToString($result[1], 2)
 
 #[convert]::tostring(  ((([byte]0xCD) -shl 1) -shr 1), 2).padleft(8, '0')
@@ -331,12 +390,51 @@ assert ( [GCM]::LSB_s(23, $test_vector) ) @(0xab, 0xcd, 0x6f) "23 bits should be
 $result_array = [GCM]::LSB_s(24, $test_vector)
 assert (([Uint32]$result_array[2] -shl 16) -bor ([Uint32]$result_array[1] -shl 8) -bor ([uint32]$result_array[0])) 0xefcdab "The last 24 bits should be 0x00efcdab & 0x00FFFFFF = 0xefcdab"
 assert ( [GCM]::LSB_s(24, $test_vector) ) @(0xab, 0xcd, 0xef) "24 bits should be 0xab 0xcd 0xef"
+assert ([GCM]::LSB_s(3, [byte[]]@([byte]218, [byte]1))) ([byte[]]@([byte]2)) "test case from the spec"
 
 
-assert ([GCM]::LSB_s(3, [byte[]]@([byte]218, [byte]0b1))) [byte[]]@([byte]0b010) "test case from the spec"
-
-
-
-
+# MSB TESTS:
 assert ([GCM]::MSB_s($test_vector.Length*8, $test_vector)) ($test_Vector) "Most sig bits of 0xAB, 0xCD, ..., 0x9A should be 0x9A, 0x78, ..., 0xAB"
+# assert ($test_vector) $false "whatever'"
+# assert ($test_vector[0..$(($test_vector.Length)-2)]) $false "whateve2"
+assert ([GCM]::MSB_s((($test_vector.Length*8)-8), $test_vector)) ($test_vector[1..$(($test_vector.Length)-1)]) "MSB_{15*8} of TV should be TV without the first element aka index 0. 0x9A, 0x78, ..., 0xCD"
 
+
+
+<#
+big endian
+0x9A,     0x78,     0x56
+10011010, 01111000, 01010110
+
+20 bits should be   01010110
+10011010, 01111000, 01010000
+0x50
+22 bits should be
+10011010, 01111000, 01010100
+0x54
+
+23 bits should be
+10011010, 01111000, 01010110
+0x56
+
+24 bits should be the same.
+
+lil' endian
+0x56, 0x78, 0x9A
+01010110, 01111000, 10011010
+#>
+assert ([GCM]::MSB_s(20, $test_vector)) ([byte[]]@([byte]0x50, [byte]0x78, [byte]0x9a)) "MSB_20 non multiple of 8 most significant bits, lets say 20 bits"
+assert ([GCM]::MSB_s(22, $test_vector)) ([byte[]]@([byte]0x54, [byte]0x78, [byte]0x9a)) "MSB_22 non multiple of 8 most significant bits, lets say 22 bits"
+assert ([GCM]::MSB_s(23, $test_vector)) ([byte[]]@([byte]0x56, [byte]0x78, [byte]0x9a)) "MSB_23 non multiple of 8 most significant bits, lets say 23 bits"
+assert ([GCM]::MSB_s(24, $test_vector)) ([byte[]]@([byte]0x56, [byte]0x78, [byte]0x9a)) "MSB_24"
+
+#                                                                   1110 0000
+# WARNING: NOTE: NOTICE:!!!! THIS IS ASSUMING THE NIST SPECIAL PUBLICATION
+# 800-38D ON PAGE 11 IMPLIES THE MOST SIGNIFICANT BITS RETURNED FROM MSB_s ARE
+# TO BE INTERPRETED AS THE LEFT MOST BITS IN A 8 BIT BYTE SO 1110 IS TREATED AS
+# 0b11100000 INSTEAD OF 0b00001110! THIS IS NOT MADE CLEAR IN THE SPECIAL
+# PUBLICATION!
+assert ([GCM]::MSB_s(4, [byte[]]@([byte]0b00000000, [byte]0b0000000011101101))) ([byte[]]@([byte]0b0000000011100000)) "# MSB_4 (1110 1101 0) = 1110. - MSB_4 0b111011010 should be 0b1100"
+assert ([GCM]::MSB_s(4, [byte[]]@([byte]0, [byte]237))) ([byte[]]@([byte]224)) "# MSB_4 (1110 1101 0) = 1110. - MSB_4 1110 1101 0 should be 0b1100"
+assert ([GCM]::MSB_s(4, [byte[]]@([byte]0b010, [byte]0b01110110))) ([byte[]]@([byte]0b01110000)) "MSB_4(01110110 10) = 0111"
+assert ([GCM]::MSB_s(4, [byte[]]@([byte]2, [byte]118))) ([byte[]]@([byte]112)) "MSB_4 0b111011010 should be 0b1100"

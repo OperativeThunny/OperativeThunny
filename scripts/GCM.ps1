@@ -224,25 +224,78 @@ class GCM {
         if($LSB.Length -le 8) {
             [UInt64]$LSBi = ([UInt64]([BitConverter]::ToUInt64($LSB, 0)))
             [UInt64]$LSBi++
-            $LSB = [BitConverter]::GetBytes($LSBi)
+            $LSBConverted = [BitConverter]::GetBytes($LSBi)
+            if ($LSB.Length -lt 8) {
+                # account for shenanigans with the LSB being less than 8 bytes,
+                # so we have to make sure that the converted and incremented LSB
+                # ends up being the exact same amount of bits as the input LSB
+                if (!([System.BitConverter]::IsLittleEndian)) {
+                    # We must reverse to ensure endianness is correct, that we are in little endian format.
+                    [array]::Reverse($LSBConverted)
+                }
+                # note we go to the original LSB length here because the
+                # LSBConverted is going to be 8 bytes because it is converted to
+                # bytes from a UInt64 which is 64 bits which is 8 bytes:
+                $LSBConverted = $LSBConverted[0..($LSB.Length-1)]
+            }
+            $LSB = $LSBConverted
         } else {
-            # what we have here is a failure to communicate. I mean, what we
-            # have here is a byte array that is more than 8 bytes long, so it is
-            # bigger than 64 bits. So, we need to increment the bytes in the
-            # array from the right most byte to the left most byte, and if the
-            # byte is 0xFF then we need to set it to 0 and increment the next
-            # byte to the left, and so on until we get to a byte that is not
-            # 0xFF, then we increment that byte by 1 and we are done.
+            # what we have here is a failure to communicate. I mean, what we 774f8fb5-bf3c-4699-a344-db633b195f2e
+            # have here is a byte array that is more than 8 bytes long, so it is 15374bff-c498-43d3-9f97-b6b85bca4c8f
+            # bigger than 64 bits. So, we need to increment the bytes in the 4e4ded42-da5f-4392-ac89-8989edd432cf
+            # array from the right most byte to the left most byte, and if the 9fc615e1-bde2-4f1c-9656-0d9d4c4ec5e0
+            # byte is 0xFF then we need to set it to 0 and increment the next 1d9a4b2b-b7a2-4ee8-9d01-8d06f59dee14
+            # byte to the left, and so on until we get to a byte that is not f5c78389-a236-42ae-b923-57be0b33ed4d
+            # 0xFF, then we increment that byte by 1 and we are done. 3bde5c21-0aeb-4f00-94b5-7d3d32fee6b6
             [Uint64]$index_to_add_1_to = [Uint64]0
             [byte]$current_byte_value = ([byte]($LSB[0]))
             while ($current_byte_value -eq [byte]0xFF -and $index_to_add_1_to -lt $LSB.Length) {
-                $LSB[$index_to_add_1_to] = [byte]0
+                [byte]$current_byte_value = [byte]([byte]($LSB[$index_to_add_1_to])) # todo check this for speed with and without casting.
+                [byte]$LSB[$index_to_add_1_to] = [byte]0
                 $index_to_add_1_to++
-                $current_byte_value = $LSB[$index_to_add_1_to]
             }
             if ($index_to_add_1_to -lt $LSB.Length) {
-                $LSB[$index_to_add_1_to]++
+                [byte]($LSB[$index_to_add_1_to]) = [byte]([byte]($current_byte_value) + [byte]1) # we are doing an overabundance of casting to make sure that the overflow situation is handled.
+            } else {
+                # LSB was all 1s, so the resulting array of all zeros is all we need.
             }
+        }
+        # We have the MSB and the LSB, but we need to combine them into a single
+        # byte array, to combine we need to create a bit mask for the LSB in
+        # case it overflowed mid byte.
+        # At this point we know we have the MSB bitstring, and the LSB bitstring
+        # after LSB has been incremented by 1 in little endian order.
+        if (($s % 8) -eq 0) {
+            # no bitmask required, we are on a byte boundary, so we can just
+            # combine the two arrays, ensuring little endian order
+            <#
+            test bit strings:
+
+            11110101  10101111  00111100  11000011
+            s=16 becomes
+            11110101  1010 1111  0011 1100  11000100
+            so MSB should be @(0b10101111, 0b11110101)
+            and LSB should be @(0b11000100, 0b00111100)
+            so merged together in the correct bit order the result would have to be
+            @(0b11000100, 0b00111100, 0b10101111, 0b11110101)
+            #>
+            return ([byte[]]$LSB) + ([byte[]]$MSB)
+        } else {
+            [byte]$MSB_lowest_significance_byte_mask = [byte]0xFF -shl (8-($s % 8))
+            [byte]$LSB_highest_significance_byte_mask = [byte]0xFF -shr (8-($s % 8))
+            #Write-Host -f red "MSB lowest significance byte mask: 0b$([convert]::tostring($MSB_lowest_significance_byte_mask, 2).PadLeft(8,'0'))"
+            #Write-Host -f red "LSB highest significance byte mask: 0b$([convert]::tostring($LSB_highest_significance_byte_mask, 2).PadLeft(8,'0'))"
+            #Write-Host -f red "MSB: $($MSB -join ",")"
+            #Write-Host -f red "LSB: $($LSB -join ",")"
+            #Write-Host -f red "MSB length: $($MSB.Length)"
+            #Write-Host -f red "LSB length: $($LSB.Length)"
+            $MSB[0] = [byte]($MSB[0] -band $MSB_lowest_significance_byte_mask)
+            $LSB[-1] = [byte]($LSB[-1] -band $LSB_highest_significance_byte_mask)
+            # merge the two border bytes together:
+            # TODO: in this and all the other methods mask out all the input
+            # arrays with 0xff after we create our new return value array so as
+            # to minimize information leakage of plaintext in memory.
+            return  [byte[]](([byte[]]($LSB[0..($LSB.Length-2)])) + ([byte[]]@( $MSB[0] -bor $LSB[-1] )) + ([byte[]]($MSB[1..($MSB.Length-1)])))
         }
         return $null
     }

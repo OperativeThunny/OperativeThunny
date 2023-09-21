@@ -55,7 +55,7 @@ exec > $LOGFILE 2>&1
 # # wow this is cool, it sends stdout and stderr to syslog and I can see it with
 # # journalctl -f -t bash_starter_skeleton.sh and I had no idea this was possible
 # # until I saw it in suggested code from copilot
-# exec 1> >(logger -s -t $(basename $0)) 2>&1
+#exec 1> >(logger -s -t $(basename $0)) 2>&1
 
 # Function to handle errors
 error_handler() {

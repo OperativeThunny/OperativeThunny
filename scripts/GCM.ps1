@@ -297,7 +297,6 @@ class GCM {
             # to minimize information leakage of plaintext in memory.
             return  [byte[]](([byte[]]($LSB[0..($LSB.Length-2)])) + ([byte[]]@( $MSB[0] -bor $LSB[-1] )) + ([byte[]]($MSB[1..($MSB.Length-1)])))
         }
-        return $null
     }
 
     # 6.3 Multiplication Operation on Blocks
@@ -317,9 +316,11 @@ class GCM {
     2. Let Z_0 = 0^128 and V_0 = Y.
     3. For i = 0 to 127, calculate blocks Zi+1 and Vi+1 as follows:
 
-    (((Programmer's note: the extra xor symbol in the first line of each piecewise function below is there intentionally,
-    but is to be discarded as you can tell it is not valid in the context because there is no second operand.
-    it is simply there so the if statements line up perfectly in my current font.)))
+    (((Programmer's note: the extra xor symbol in the first line of each
+    piecewise function below is there intentionally, but is to be discarded as
+    you can tell it is not valid in the context because there is no second
+    operand. it is simply there so the if statements line up perfectly in my
+    current font.)))
 
         Z_{i+1} =
                     ⎧  Z_i⊕          if x_i = 0;
@@ -334,16 +335,28 @@ class GCM {
 
     4. Return Z_128
 
-    The • operation on (pairs of) the 2^128 possible blocks corresponds to the multiplication operation
-    for the binary Galois (finite) field of 2^128 elements. The fixed block, R, determines a
-    representation of this field as the modular multiplication of binary polynomials of degree less
-    than 128. The convention for interpreting strings as polynomials is “little endian”: i.e., if u is
-    the variable of the polynomial, then the block x_0 x_1...x_127 corresponds to the polynomial x_0 + x_1 u +
-    x_2 u^2 + ... + x_127 u^127. The XOR operation is used to add coefficients of “like” terms during the
-    multiplication. The reduction modulus is the polynomial of degree 128 that corresponds to R || 1.
-    Ref. [6] discusses this field in detail.
-    For a positive integer i, the ith power of a block X with this multiplication operation is denoted
-    X^i. For example, H^2 =H•H, H^3 =H•H•H, etc.
+    The • operation on (pairs of) the 2^128 possible blocks corresponds to the
+    multiplication operation for the binary Galois (finite) field of 2^128
+    elements. The fixed block, R, determines a representation of this field as
+    the modular multiplication of binary polynomials of degree less than 128.
+    The convention for interpreting strings as polynomials is “little endian”:
+    i.e., if u is the variable of the polynomial, then the block x_0 x_1...x_127
+    corresponds to the polynomial x_0 + x_1 u + x_2 u^2 + ... + x_127 u^127. The
+    XOR operation is used to add coefficients of “like” terms during the
+    multiplication. The reduction modulus is the polynomial of degree 128 that
+    corresponds to R || 1. Ref. [6] discusses this field in detail. For a
+    positive integer i, the ith power of a block X with this multiplication
+    operation is denoted X^i. For example, H^2 =H•H, H^3 =H•H•H, etc.
+
+    (((Programmer's note:
+        If you didn't take higher levels of math like me in college (I need to
+        take linear algebra and abstract algebra to really understand this and
+        ai stuff) a Galois (finite) field of 2^128, denoted GF(128), can be
+        understood with this wiki article for the short fast explanation, then
+        this expanded article for all the finite field stuff:
+        1. https://en.wikipedia.org/wiki/Field_(mathematics)#A_field_with_four_elements
+        2. https://en.wikipedia.org/wiki/Finite_field#Field_with_four_elements
+    )))
     #>
     <#
     .SYNOPSIS

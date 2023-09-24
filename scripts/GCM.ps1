@@ -225,14 +225,17 @@ class GCM {
             [UInt64]$LSBi = ([UInt64]([BitConverter]::ToUInt64($LSB, 0)))
             [UInt64]$LSBi++
             $LSBConverted = [BitConverter]::GetBytes($LSBi)
+
+            if (!([System.BitConverter]::IsLittleEndian)) {
+                # We must reverse to ensure endianness is correct, that we are in little endian format.
+                [array]::Reverse($LSBConverted)
+            }
+
             if ($LSB.Length -lt 8) {
                 # account for shenanigans with the LSB being less than 8 bytes,
                 # so we have to make sure that the converted and incremented LSB
                 # ends up being the exact same amount of bits as the input LSB
-                if (!([System.BitConverter]::IsLittleEndian)) {
-                    # We must reverse to ensure endianness is correct, that we are in little endian format.
-                    [array]::Reverse($LSBConverted)
-                }
+
                 # note we go to the original LSB length here because the
                 # LSBConverted is going to be 8 bytes because it is converted to
                 # bytes from a UInt64 which is 64 bits which is 8 bytes:
@@ -309,26 +312,20 @@ class GCM {
         blocks X, Y.
 
     Output:
-        block  X• Y.
+        block  X • Y.
 
     Steps:
     1. Let x_0 x_1...x_127 denote the sequence of bits in X.
     2. Let Z_0 = 0^128 and V_0 = Y.
-    3. For i = 0 to 127, calculate blocks Zi+1 and Vi+1 as follows:
-
-    (((Programmer's note: the extra xor symbol in the first line of each
-    piecewise function below is there intentionally, but is to be discarded as
-    you can tell it is not valid in the context because there is no second
-    operand. it is simply there so the if statements line up perfectly in my
-    current font.)))
+    3. For i = 0 to 127, calculate blocks Z_{i+1} and V_{i+1} as follows:
 
         Z_{i+1} =
-                    ⎧  Z_i⊕          if x_i = 0;
+                    ⎧  Z_i           if x_i = 0;
                     ⎨  Z_i ⊕ V_i     if x_i = 1.
                     ⎩
 
         V_{i+1} =
-                    ⎧ V_i >> 1⊕      if LSB_1 (V_i) = 0;
+                    ⎧ V_i >> 1       if LSB_1 (V_i) = 0;
 
                     ⎨(V_i >> 1)⊕R    if LSB_1 (V_i) = 1.
                     ⎩
@@ -349,7 +346,7 @@ class GCM {
     operation is denoted X^i. For example, H^2 =H•H, H^3 =H•H•H, etc.
 
     (((Programmer's note:
-        If you didn't take higher levels of math like me in college (I need to
+        If you, like me, didn't take higher levels of math in college (I need to
         take linear algebra and abstract algebra to really understand this and
         ai stuff) a Galois (finite) field of 2^128, denoted GF(128), can be
         understood with this wiki article for the short fast explanation, then
@@ -370,6 +367,31 @@ class GCM {
         The product of the two 128-bit Galois Field elements.
     #>
     [byte[]] GF128Mul([byte[]]$X, [byte[]]$Y) {
+
+    # 1. Let x_0 x_1...x_127 denote the sequence of bits in X.
+    # 2. Let Z_0 = 0^128 and V_0 = Y.
+    # 3. For i = 0 to 127, calculate blocks Z_{i+1} and V_{i+1} as follows:
+
+    #     Z_{i+1} =
+    #                 ⎧  Z_i           if x_i = 0;
+    #                 ⎨  Z_i ⊕ V_i     if x_i = 1.
+    #                 ⎩
+
+    #     V_{i+1} =
+    #                 ⎧ V_i >> 1       if LSB_1 (V_i) = 0;
+
+    #                 ⎨(V_i >> 1)⊕R    if LSB_1 (V_i) = 1.
+    #                 ⎩
+
+    # 4. Return Z_128
+        [System.Collections.BitArray]$big_chungus = [System.Collections.BitArray]::new($X)
+        [System.Collections.BitArray]$V = [System.Collections.BitArray]::new($Y)
+        [System.Collections.BitArray]$Z = [System.Collections.BitArray]::new(128)
+        $Z.SetAll($false)
+        $R = [byte[]]@(0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xE1) #225 is 0b11100001 is 0xE1
+
+
+
         return $null
     }
 

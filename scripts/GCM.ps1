@@ -366,7 +366,7 @@ class GCM {
     .OUTPUTS
         The product of the two 128-bit Galois Field elements.
     #>
-    [byte[]] GF128Mul([byte[]]$X, [byte[]]$Y) {
+    static [byte[]] GF128Mul([byte[]]$X, [byte[]]$Y) {
 
     # 1. Let x_0 x_1...x_127 denote the sequence of bits in X.
     # 2. Let Z_0 = 0^128 and V_0 = Y.
@@ -389,10 +389,25 @@ class GCM {
         [System.Collections.BitArray]$Z = [System.Collections.BitArray]::new(128)
         $Z.SetAll($false)
         $R = [byte[]]@(0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xE1) #225 is 0b11100001 is 0xE1
+        $R = [System.Collections.BitArray]::new($R)
+write-host -BackgroundColor red "what?"
+        foreach ($bit in $big_chungus.GetEnumerator()) {
+            write-host -BackgroundColor red "This is the bit value: $($bit)"
+            # https://learn.microsoft.com/en-us/dotnet/api/system.collections.bitarray?view=net-7.0
+            # says that the instance is modified to store the result. so we dont need to reassign.
+            if ($bit) {
+                $Z.Xor($V)
+            }
 
+            if ($V[0]) { # TODO: The shift methods do not exist in powershell 5.1 in the bitarray class.
+                $V.RightShift(1)
+                $V.Xor($R)
+            } else {
+                $V.RightShift(1)
+            }
+        }
 
-
-        return $null
+        return [GCM]::BitToByteArray($Z) # TODO: there is no way it was this simple so I'm sure I messed something up... will need extensive test cases...
     }
 
     # The output of the GHASH function under the hash subkey H applied to the bit string X.
@@ -434,6 +449,8 @@ Write-Output "Test vector reversed: $( ($test_vector | ForEach-Object{ ([Convert
 # Assertion module from http://cleancode.sourceforge.net/
 Import-Module "./CleanCode/Assertion/Assertion.psm1"
 if (!(Get-Alias -Name assert -ErrorAction SilentlyContinue)) { New-Alias -Name "assert" -Value "Assert-Expression" }
+
+[GCM]::GF128Mul($test_vector, $test_vector)
 
 # [BitConverter]::SingleToUint32Bits(0xAB)
 # [BitConverter]::SingleToUint32Bits(0x000000AB)
@@ -542,3 +559,5 @@ assert ([GCM]::MSB_s(4, [byte[]]@([byte]0b00000000, [byte]0b0000000011101101))) 
 assert ([GCM]::MSB_s(4, [byte[]]@([byte]0, [byte]237))) ([byte[]]@([byte]224)) "# MSB_4 (1110 1101 0) = 1110. - MSB_4 1110 1101 0 should be 0b1100"
 assert ([GCM]::MSB_s(4, [byte[]]@([byte]0b010, [byte]0b01110110))) ([byte[]]@([byte]0b01110000)) "MSB_4(01110110 10) = 0111"
 assert ([GCM]::MSB_s(4, [byte[]]@([byte]2, [byte]118))) ([byte[]]@([byte]112)) "MSB_4 0b111011010 should be 0b1100"
+
+# TODO: test cases for increment and GF128Mul

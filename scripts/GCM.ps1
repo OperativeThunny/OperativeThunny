@@ -365,6 +365,13 @@ class GCM {
         Two 128-bit Galois Field elements.
     .OUTPUTS
         The product of the two 128-bit Galois Field elements.
+    .NOTES
+        Maybe this can be re-done with another class that implements 128 bit UInts?
+        Check this sick github out for 128bit ints: https://github.com/ricksladkey/dirichlet-numerics
+        Should we overload the byte array class to have operator overloading so you can xor arrays without writing the full loop each time?
+        check this for overloading: https://stackoverflow.com/questions/59290037/overloading-operator-in-powershell-classes
+        also here: https://www.oreilly.com/library/view/windows-powershell-pocket/9781449363369/ch01.html#windows_powershell_arithmetic_operators
+
     #>
     static [byte[]] GF128Mul([byte[]]$X, [byte[]]$Y) {
 
@@ -390,9 +397,8 @@ class GCM {
         $Z.SetAll($false)
         $R = [byte[]]@(0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xE1) #225 is 0b11100001 is 0xE1
         $R = [System.Collections.BitArray]::new($R)
-write-host -BackgroundColor red "what?"
+
         foreach ($bit in $big_chungus.GetEnumerator()) {
-            write-host -BackgroundColor red "This is the bit value: $($bit)"
             # https://learn.microsoft.com/en-us/dotnet/api/system.collections.bitarray?view=net-7.0
             # says that the instance is modified to store the result. so we dont need to reassign.
             if ($bit) {
@@ -441,6 +447,9 @@ Test vector reversed: 9a, 78, 56, 34, 12, f0, de, bc, 9a, 78, 56, 34, 12, ef, cd
 Test vector reversed: 10011010, 01111000, 01010110, 00110100, 00010010, 11110000, 11011110, 10111100, 10011010, 01111000, 01010110, 00110100, 00010010, 11101111, 11001101, 10101011
 #>
 #                       0b10101011 0b11001101 0b11101111 0b00010010 0b00110100
+$128BitZero = ([byte[]]@([byte]0x00) * 16)
+$128BitMaxValue = ([byte[]]@([byte]0xFF) * 16)
+$128BitOne = ([byte[]]@([byte]0x00) * 15) + ([byte[]]@([byte]0x01))
 $test_vector = [byte[]]@(0xAB,      0xCD,      0xEF,      0x12,      0x34,      0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xF0, 0x12, 0x34, 0x56, 0x78, 0x9A)
 Write-Output "Test vector: $(($test_vector | ForEach-Object{ ([Convert]::ToString($_, 2)).PadLeft(8, '0') }) -join ", ")"
 Write-Output "Test vector: $(($test_vector | ForEach-Object{ ([Convert]::ToString($_, 16)).PadLeft(2, '0') }) -join ", ")"
@@ -450,7 +459,11 @@ Write-Output "Test vector reversed: $( ($test_vector | ForEach-Object{ ([Convert
 Import-Module "./CleanCode/Assertion/Assertion.psm1"
 if (!(Get-Alias -Name assert -ErrorAction SilentlyContinue)) { New-Alias -Name "assert" -Value "Assert-Expression" }
 
-[GCM]::GF128Mul($test_vector, $test_vector)
+class Bote : System.Array {
+
+}
+
+
 
 # [BitConverter]::SingleToUint32Bits(0xAB)
 # [BitConverter]::SingleToUint32Bits(0x000000AB)
@@ -560,4 +573,8 @@ assert ([GCM]::MSB_s(4, [byte[]]@([byte]0, [byte]237))) ([byte[]]@([byte]224)) "
 assert ([GCM]::MSB_s(4, [byte[]]@([byte]0b010, [byte]0b01110110))) ([byte[]]@([byte]0b01110000)) "MSB_4(01110110 10) = 0111"
 assert ([GCM]::MSB_s(4, [byte[]]@([byte]2, [byte]118))) ([byte[]]@([byte]112)) "MSB_4 0b111011010 should be 0b1100"
 
+assert ([GCM]::inc_s(4, [byte[]]@([byte]0x00))) ([byte[]]@([byte]0x01)) "ensure adding 1 to a single null byte is 1."
+
 # TODO: test cases for increment and GF128Mul
+assert ([GCM]::GF128Mul( $test_vector, $128BitZero )) ($128BitZero) "`$X • 0 = 0"
+

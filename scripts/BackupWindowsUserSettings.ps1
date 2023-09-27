@@ -8,51 +8,71 @@ Date: 10 August 2023
 Last mod: 14 August 2023
 
 Copyright (C) 2023 @OperativeThunny. All rights reserved. Do not use, modify, copy, and/or distribute.
-
 Reference links:
-    1. https://jdhitsolutions.com/blog/powershell/8420/managing-the-windows-10-taskbar-with-powershell/
-        a. https://www.howtogeek.com/677619/how-to-hide-the-taskbar-on-windows-10/
-    2. https://stackoverflow.com/questions/4491999/configure-windows-explorer-folder-options-through-powershell/4493994#4493994
-    3. https://www.addictivetips.com/windows-tips/how-back-up-the-taskbar-layout-windows-10/
-    4. https://old.reddit.com/r/PowerShell/comments/ylsgjt/creating_and_restoring_backup_of_taskbar_in/
-      a. https://4sysops.com/archives/configure-pinned-programs-on-the-windows-taskbar-with-group-policy/
+    https://jdhitsolutions.com/blog/powershell/8420/managing-the-windows-10-taskbar-with-powershell/
+        https://www.howtogeek.com/677619/how-to-hide-the-taskbar-on-windows-10/
+    https://stackoverflow.com/questions/4491999/configure-windows-explorer-folder-options-through-powershell/4493994#4493994
+    https://www.addictivetips.com/windows-tips/how-back-up-the-taskbar-layout-windows-10/
+    https://old.reddit.com/r/PowerShell/comments/ylsgjt/creating_and_restoring_backup_of_taskbar_in/
+#       https://4sysops.com/archives/configure-pinned-programs-on-the-windows-taskbar-with-group-policy/
 #>
 param (
     [Parameter(Mandatory)]
     [ValidateSet("Backup", "Restore")]
     [string]$Operation            = "Backup",
     [string]$backupDirPrefix      = "CustomiziationsAndBookmarksBackup",
-    [string]$backupDir            = "$($env:USERPROFILE)\OneDrive\Documents",
+    [string]$backupDir            = "$($env:USERPROFILE)\OneDrive - US Army\Documents",
     [string]$backupDirUnique      = "$($backupDir)\$($backupDirPrefix)$($(Get-Date).ToFileTimeUtc())",
-    [string]$taskbarButtonsDir    = "$($backupDirUnique)\PinnedTaskbarButtons\", # TODO: account for these suffixes being hardcoded down in the restore area
+
+# account for these suffixes being hardcoded down in the restore area:
+    [string]$taskbarButtonsDir    = "$($backupDirUnique)\PinnedTaskbarButtons\",
     [string]$LocalAppDataBackup   = "$($backupDirUnique)\LocalAppDataBackup",
     [string]$RoamingAppDataBackup = "$($backupDirUnique)\RoamingAppDataBackup"
+<# MAKE SURE YOU ACCOUNT FOR THESE VARIABLES BEING HARDCODED BELOW IF YOU DECIDE TO CHANGE THESE PARAMETERS.
+HERE ARE THE PARAMETERS COPY/PASTED FROM BELOW. MAKE SURE THEY MATCH SPECIFIED PARAMETERS IF YOU DECIDE TO CHANGE STUFF OR ELSE RESTORE WONT WORK RIGHT.
+taskbarButtonsDir  = "$($restoreDir)\PinnedTaskbarButtons\"
+LocalAppDataBackup = "$($restoreDir)\LocalAppDataBackup"
+RoamingAppDataBackup = "$($restoreDir)\RoamingAppDataBackup"
+#>
 )
-
+try{
+$oldPWD = Get-Location
 if ($Operation -eq "Backup") {
     if (!(Test-Path $backupDirUnique)) {
         New-Item -Path $backupDirUnique -ItemType Directory
     }
     Set-Location $backupDirUnique
     # Invoke-Command {REG EXPORT HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\ WinExplorerSettingsFull.reg} # this is a lot of settings that some of which should probably not be overwritten on a new install...
-    Invoke-Command {REG EXPORT HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced WinFileExplorerSettings.reg}
-    Invoke-Command {REG EXPORT HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\HideDesktopIcons WinDesktopIconsSettings.reg}
-    Invoke-Command {REG EXPORT HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\StuckRects3 WinTaskbarHideSettings.reg}
-    Invoke-Command {REG EXPORT HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\Taskband WinExplorerTaskbarSettings.reg}
-    Invoke-Command {REG EXPORT HKCU\Software\SimonTatham PuTTYSettings.reg}
+    Invoke-Command {REG EXPORT HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced WinFileExplorerSettings.reg} -Verbose
+    Invoke-Command {REG EXPORT HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\HideDesktopIcons WinDesktopIconsSettings.reg} -Verbose
+    Invoke-Command {REG EXPORT HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\StuckRects3 WinTaskbarHideSettings.reg} -Verbose
+    Invoke-Command {REG EXPORT HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\Taskband WinExplorerTaskbarSettings.reg} -Verbose
+    Invoke-Command {REG EXPORT HKCU\Software\SimonTatham PuTTYSettings.reg} -Verbose
+
     mkdir $taskbarButtonsDir
     Set-Location $taskbarButtonsDir
-    Copy-Item -Recurse -Path "$($env:APPDATA)\Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar\" -Destination $taskbarButtonsDir
+    Copy-Item -Recurse -Path "$($env:APPDATA)\Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar\" -Destination $taskbarButtonsDir -Verbose
+
     mkdir $LocalAppDataBackup
     Set-Location $LocalAppDataBackup
-    Copy-Item -Recurse -Exclude "*cache2*" -Path "$($env:LOCALAPPDATA)\Mozilla" -Destination "$($LocalAppDataBackup)\Mozilla"
+
+    # hmm it appears that the exclude does not work in this approach. Attempting something else from this stack overflow:
+    # https://stackoverflow.com/questions/731752/exclude-list-in-powershell-copy-item-does-not-appear-to-be-working
+    #Copy-Item -Recurse -Exclude "*cache2*" -Path "$($env:LOCALAPPDATA)\Mozilla" -Destination "$($LocalAppDataBackup)\Mozilla"
+    #robocopy "$($env:LOCALAPPDATA)\Mozilla" "$($LocalAppDataBackup)\Mozilla" /S /XF *.FileExtToExclude /XD *cache*
+    # But, wait! A later comment in that stackoverflow says that you just need to make sure the exclude parameter is a string array:
+    [string[]]$firefoxExcludes = ([string[]]@("cache2", "*cache*", "*Cache*", "*safebrowsing*", "*.bin", "*.lz4", "*icon*", "*thumbnails*", "*.final"))
+    Copy-Item -Recurse -Exclude [string[]]$firefoxExcludes -Path "$($env:LOCALAPPDATA)\Mozilla" -Destination "$($LocalAppDataBackup)\Mozilla" -ErrorAction SilentlyContinue -Verbose
+
     # %localappdata%\microsoft\edge\User Data\Default\Bookmarks
-    Copy-Item -Path "$($env:LOCALAPPDATA)\Microsoft\Edge\User Data\Default\Bookmarks" -Destination "$($LocalAppDataBackup)\EdgeBookmarks.json"
-    Copy-Item -Path "$($env:LOCALAPPDATA)\Google\Chrome\User Data\Default\Bookmarks" -Destination "$($LocalAppDataBackup)\ChromeBookmarks.json"
+    Copy-Item -Path "$($env:LOCALAPPDATA)\Microsoft\Edge\User Data\Default\Bookmarks" -Destination "$($LocalAppDataBackup)\EdgeBookmarks.json" -Verbose
+    Copy-Item -Path "$($env:LOCALAPPDATA)\Google\Chrome\User Data\Default\Bookmarks" -Destination "$($LocalAppDataBackup)\ChromeBookmarks.json" -Verbose
+
     mkdir $RoamingAppDataBackup
     Set-Location $RoamingAppDataBackup
-    Copy-Item -Recurse -Path "$($env:APPDATA)\Notepad++" -Destination "$($RoamingAppDataBackup)\Notepad++"
-    Copy-Item -Recurse -Exclude "*cache2*" -Path "$($env:APPDATA)\Mozilla" -Destination "$($RoamingAppDataBackup)\Mozilla"
+
+    Copy-Item -Recurse -Path "$($env:APPDATA)\Notepad++" -Destination "$($RoamingAppDataBackup)\Notepad++" -Verbose
+    Copy-Item -Recurse -Exclude $firefoxExcludes -Path "$($env:APPDATA)\Mozilla" -Destination "$($RoamingAppDataBackup)\Mozilla" -ErrorAction SilentlyContinue -Verbose
 
 } elseif ($Operation -eq "Restore") {
 
@@ -114,25 +134,28 @@ if ($Operation -eq "Backup") {
     [string]$LocalAppDataBackup = "$($restoreDir)\LocalAppDataBackup"
     [string]$RoamingAppDataBackup = "$($restoreDir)\RoamingAppDataBackup"
     # Invoke-Command {REG IMPORT WinExplorerSettingsFull.reg} # this is a lot of settings that some of which should probably not be overwritten on a new install...
-    Invoke-Command {REG IMPORT WinFileExplorerSettings.reg}
-    Invoke-Command {REG IMPORT WinDesktopIconsSettings.reg}
-    Invoke-Command {REG IMPORT WinTaskbarHideSettings.reg}
-    Invoke-Command {REG IMPORT WinExplorerTaskbarSettings.reg}
-    Invoke-Command {REG IMPORT PuTTYSettings.reg}
+    Invoke-Command {REG IMPORT WinFileExplorerSettings.reg} -Verbose
+    Invoke-Command {REG IMPORT WinDesktopIconsSettings.reg} -Verbose
+    Invoke-Command {REG IMPORT WinTaskbarHideSettings.reg} -Verbose
+    Invoke-Command {REG IMPORT WinExplorerTaskbarSettings.reg} -Verbose
+    Invoke-Command {REG IMPORT PuTTYSettings.reg} -Verbose
 
     Set-Location $taskbarButtonsDir
-    Copy-Item -Recurse -Path $taskbarButtonsDir -Destination "$($env:APPDATA)\Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar\"
+    Copy-Item -Recurse -Path $taskbarButtonsDir -Destination "$($env:APPDATA)\Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar\" -Verbose
 
     Set-Location $LocalAppDataBackup
     # TODO: you might need to add -force
-    Copy-Item -Recurse -Path "$($LocalAppDataBackup)\Mozilla" -Destination "$($env:LOCALAPPDATA)\Mozilla"
+    Copy-Item -Recurse -Path "$($LocalAppDataBackup)\Mozilla" -Destination "$($env:LOCALAPPDATA)\Mozilla" -Verbose
     # %localappdata%\microsoft\edge\User Data\Default\Bookmarks
-    Copy-Item -Path "$($LocalAppDataBackup)\EdgeBookmarks.json" -Destination "$($env:LOCALAPPDATA)\Microsoft\Edge\User Data\Default\Bookmarks"
-    Copy-Item -Path "$($LocalAppDataBackup)\ChromeBookmarks.json" -Destination "$($env:LOCALAPPDATA)\Google\Chrome\User Data\Default\Bookmarks"
+    Copy-Item -Path "$($LocalAppDataBackup)\EdgeBookmarks.json" -Destination "$($env:LOCALAPPDATA)\Microsoft\Edge\User Data\Default\Bookmarks" -Verbose
+    Copy-Item -Path "$($LocalAppDataBackup)\ChromeBookmarks.json" -Destination "$($env:LOCALAPPDATA)\Google\Chrome\User Data\Default\Bookmarks" -Verbose
 
     Set-Location $RoamingAppDataBackup
-    Copy-Item -Recurse -Path "$($RoamingAppDataBackup)\Notepad++" -Destination "$($env:APPDATA)\Notepad++"
-    Copy-Item -Recurse -Path "$($RoamingAppDataBackup)\Mozilla" -Destination "$($env:APPDATA)\Mozilla"
+    Copy-Item -Recurse -Path "$($RoamingAppDataBackup)\Notepad++" -Destination "$($env:APPDATA)\Notepad++" -Verbose
+    Copy-Item -Recurse -Path "$($RoamingAppDataBackup)\Mozilla" -Destination "$($env:APPDATA)\Mozilla" -Verbose
 } else {
     Write-Error "Invalid operation specified, somehow. But that is not supposed to be possible to ever happen!"
+}
+} finally {
+    Set-Location $oldPWD
 }

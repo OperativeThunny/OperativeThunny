@@ -21,7 +21,7 @@ param (
     [ValidateSet("Backup", "Restore")]
     [string]$Operation            = "Backup",
     [string]$backupDirPrefix      = "CustomiziationsAndBookmarksBackup",
-    [string]$backupDir            = "$($env:USERPROFILE)\OneDrive - US Army\Documents",
+    [string]$backupDir            = "$($env:USERPROFILE)\OneDrive\Documents",
     [string]$backupDirUnique      = "$($backupDir)\$($backupDirPrefix)$($(Get-Date).ToFileTimeUtc())",
 
 # account for these suffixes being hardcoded down in the restore area:

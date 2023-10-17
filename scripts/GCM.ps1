@@ -73,6 +73,7 @@ using namespace System.Security.Cryptography
 
 class GCM {
     [System.Security.Cryptography.SymmetricAlgorithm]$block_cipher_instance
+    static hidden [System.Security.Cryptography.RandomNumberGenerator]$rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
 
     hidden [void] Init([System.Security.Cryptography.SymmetricAlgorithm]$block_cipher_instance) {
         $this.block_cipher_instance = $block_cipher_instance
@@ -84,6 +85,12 @@ class GCM {
 
     GCM([System.Security.Cryptography.SymmetricAlgorithm]$block_cipher_instance) {
         $this.Init($block_cipher_instance)
+    }
+
+    static hidden [byte[]] GenerateRandomBytes([int]$length) {
+        $bytes = [byte[]]::new($length)
+        [GCM]::rng.GetBytes($bytes)
+        return $bytes
     }
 
     #https://stackoverflow.com/questions/38381890/powershell-bytes-to-bit-array
@@ -375,7 +382,20 @@ class GCM {
         also here: https://www.oreilly.com/library/view/windows-powershell-pocket/9781449363369/ch01.html#windows_powershell_arithmetic_operators
     #>
     static [byte[]] GF128Mul([byte[]]$X, [byte[]]$Y) {
+        if ($X.Length -ne 16 -or $Y.Length -ne 16) {
+            Write-Error "GF128Mul requires two 128-bit blocks as input."
+            return $null
+        }
+        [byte[]]$randomThrowawayBytes = [GCM]::GenerateRandomBytes(16)
+        [byte[]]$probability_of_random_throwaway_bytes = [byte[]]::new(1)
+        [GCM]::rng.GetNonZeroBytes($probability_of_random_throwaway_bytes)
+        [byte]$probability_of_random_throwaway_bytes = $probability_of_random_throwaway_bytes[0]
+        [float]$probability_of_pause = [float]$probability_of_random_throwaway_bytes / [float]0xFF
 
+        [byte[]]$randomIndex = [byte[]]@(0x00)
+        [GCM]::rng.GetNonZeroBytes($randomIndex)
+        [byte]$randomIndex = $randomIndex[0]
+        [int]$randomIndex = $randomIndex % 16
     # 1. Let x_0 x_1...x_127 denote the sequence of bits in X.
     # 2. Let Z_0 = 0^128 and V_0 = Y.
     # 3. For i = 0 to 127, calculate blocks Z_{i+1} and V_{i+1} as follows:
@@ -399,6 +419,11 @@ class GCM {
         $R = [byte[]]@(0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xE1) #225 is 0b11100001 is 0xE1
         $R = [System.Collections.BitArray]::new($R)
 
+
+        # We are looping over the input value X here, which is why X or the
+        # other variable does not show up inside the loop body. (note here for
+        # myself because I confused myself at first when re-reading this after
+        # some time)
         foreach ($bit in $big_chungus.GetEnumerator()) {
             # https://learn.microsoft.com/en-us/dotnet/api/system.collections.bitarray?view=net-7.0
             # says that the instance is modified to store the result. so we dont need to reassign.
@@ -412,15 +437,54 @@ class GCM {
             } else {
                 $V.RightShift(1)
             }
+
+            # Mitigate timing attacks????
+            if( (([float]$randomThrowawayBytes[$randomIndex % 16]) / [float]0xFF) -le $probability_of_pause ) {
+                Start-Sleep -Duration ([timespan]::FromMicroseconds([double]$randomThrowawayBytes[$randomIndex % 16]))
+            }
+            $randomIndex = $randomThrowawayBytes[$randomIndex % 16]
+            [byte[]]$probability_of_random_throwaway_bytes = [byte[]]::new(1)
+            [GCM]::rng.GetNonZeroBytes($probability_of_random_throwaway_bytes)
+            [byte]$probability_of_random_throwaway_bytes = $probability_of_random_throwaway_bytes[0]
+            [float]$probability_of_pause = [float]$probability_of_random_throwaway_bytes / [float]0xFF
         }
 
+        $randomThrowawayBits = [System.Collections.BitArray]::new($randomThrowawayBytes)
+        # Zero out everything that we are not going to return to minimize sensitive information in memory:
         for($i = 0; $i -lt 128; $i++) {
-            #$Z[$i] = $Z[$i] -xor $V[$i]
             # loop to do a bunch of nothing for some sort of timing mitigation?
-            $big_chungus[$i] = $big_chungus[$i] -xor $V[$i]
-
-
+            $big_chungus[$i] = $big_chungus[$i] -bxor $randomThrowawayBits[$i]
+            $V[$i] = $V[$i] -bxor $randomThrowawayBits[$i]
+            $R[$i] = $R[$i] -bxor $randomThrowawayBits[$i]
+            $big_chungus[$i] = 0xFF
+            $V[$i] = 0xFF
+            $R[$i] = 0xFF
+            $randomThrowawayBits[$i] = 0xFF
+            $big_chungus[$i] = 0x00
+            $V[$i] = 0x00
+            $R[$i] = 0x00
+            $randomThrowawayBits[$i] = 0x00
         }
+
+        for($i = 0; $i -lt 16; $i++) {
+            $X[$i] = $X[$i] -bxor $randomThrowawayBytes[$i]
+            $Y[$i] = $Y[$i] -bxor $randomThrowawayBytes[$i]
+            $X[$i] = $X[$i] -bxor $X[$i]
+            $Y[$i] = $Y[$i] -bxor $Y[$i]
+            $randomThrowawayBytes[$i] = $randomThrowawayBytes[$i] -bxor $randomThrowawayBytes[$i]
+        }
+        $X.Clear()
+        $Y.Clear()
+        $randomThrowawayBytes.Clear()
+        $X = $null
+        $Y = $null
+        $randomThrowawayBytes = $null
+        $big_chungus = $null
+        $V = $null
+        $R = $null
+        $randomThrowawayBits = $null
+
+        [System.GC]::Collect()
 
         return [GCM]::BitToByteArray($Z) # TODO: there is no way it was this simple so I'm sure I messed something up... will need extensive test cases...
     }

@@ -10,6 +10,40 @@ Requirements:
       powershell or windows terminal. We are stuck with .net FRAMEWORK 4.8.
     Uses hardware x.509 PKI smartcards to encrypt master key and sign encrypted DB.
 
+    This is a proof of concept and is not intended to be used in production.
+
+Proposed method of operation:
+   would I gain any security if I took a cryptographically secure random
+   generated sequence of bytes intended to be used as an AES crypto key and pass
+   it through a KDF with a salt?
+
+   I planned on every time a change is made to regenerate themaster key and
+   re-encrypt everything with the new key, which is another question I had:
+   would continualy re-encrypting with new keys leak information?
+
+   The setup I'm thinking of implementing is like this: Securely gen 32 bytes
+   for the master key then securely generate some amount of bytes for a salt and
+   feed the master key and salt into the KDF to get a generator for further
+   keys, use 32 bytes from that as the master encryption key, K, fed into AES
+   for encrypting the json document, then for each password you generate or add
+   to the password document you generate a guid to act as an ID. Each record
+   would be (sequence num, uuid, name, password) and then using 32 bytes from
+   the master key gen as the "password" and salted with the UUID for the
+   particular password fed into a new KDF instance, you encrpt each individual
+   password, then once all the passwords are encrypted using their unique
+   derived keys you encrypt the whole array of entry rows using the master
+   encryption key, K, then you encrypt the original salt and master key using
+   the users's certificate, and sign the whole document of encrypted key and
+   encrypted row data using the certificate. Then when youneed to search based
+   on name, you can decrypt thejson array and rehydrate it into an array of
+   objects and search through the name fields, and when you find the right
+   password you can regen the individualized necryption key for that password
+   and decrypt and return the password
+
+   question: anythign gained with all the usages of KDF? And if I regenerate and
+   re-encrypt the whole document and each row every time a change is made using
+   this method, doe3s that leak information?
+
 ==============================================================================
 Scripts by OperativeThunny - Command line password manager using AES-256-GCM and
 x.509 PKI smartcards

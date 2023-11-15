@@ -74,7 +74,7 @@ using namespace System.Security.Cryptography
 class GCM {
     [System.Security.Cryptography.SymmetricAlgorithm]$block_cipher_instance
     static hidden [System.Security.Cryptography.RandomNumberGenerator]$rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
-
+    static hidden $h = $host; # this is a hack to get around the fact that $host is not available in static methods.
     hidden [void] Init([System.Security.Cryptography.SymmetricAlgorithm]$block_cipher_instance) {
         $this.block_cipher_instance = $block_cipher_instance
     }
@@ -227,9 +227,10 @@ class GCM {
     static [byte[]]inc_s($s, $X) {
         $MSB = [GCM]::MSB_s((($X.Length*8)-$s), $X)
         $LSB = [GCM]::LSB_s($s, $X)
-
+[GCM]::h.UI.WriteLine("Length of LSB: $($LSB.Length)");
         if($LSB.Length -le 8) {
-            [UInt64]$LSBi = ([UInt64]([BitConverter]::ToUInt64($LSB, 0)))
+
+            [UInt64]$LSBi = ([UInt64]([BitConverter]::ToUInt64($LSB))) # TODO: This line is breaking with this error: Exception calling "ToUInt64" with "1" argument(s): "Specified argument was out of the range of valid values. (Parameter 'value')"
             [UInt64]$LSBi++
             $LSBConverted = [BitConverter]::GetBytes($LSBi)
 
@@ -443,11 +444,11 @@ class GCM {
                 Start-Sleep -Duration ([timespan]::FromMicroseconds([double]$randomThrowawayBytes[$randomIndex % 16]))
             }
             $randomIndex = $randomThrowawayBytes[$randomIndex % 16]
-            [byte[]]$probability_of_random_throwaway_bytes = [byte[]]::new(1)
+            [byte[]]$probability_of_random_throwaway_bytes = [byte[]]::new(1) # TODO: Move this outside the loop.
             [GCM]::rng.GetNonZeroBytes($probability_of_random_throwaway_bytes)
             [byte]$probability_of_random_throwaway_bytes = $probability_of_random_throwaway_bytes[0]
             [float]$probability_of_pause = [float]$probability_of_random_throwaway_bytes / [float]0xFF
-        }
+        } # end of main loop
 
         $randomThrowawayBits = [System.Collections.BitArray]::new($randomThrowawayBytes)
         # Zero out everything that we are not going to return to minimize sensitive information in memory:

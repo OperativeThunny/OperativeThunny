@@ -76,7 +76,8 @@ using namespace System.Security.Cryptography
 param(
     [Parameter(Mandatory=$true,
                Position=0,
-               HelpMessage="Operation to perform: new, generate, search, get, put, push, pop, export, import")]
+               HelpMessage="Operation to perform: new, generate, search, get, put, push, pop, export, import. \n`
+               # generate simply generates a new random string and does nothing else. new does the same thing but also adds it to the database.")]
     [ValidateSet("new", "generate", "search", "get", "put", "push", "pop", "export", "import")]
     [string]$Operation,
 
@@ -281,58 +282,97 @@ class PasswordDatabase {
     [byte[]]$MasterKey
     [byte[]]$MasterSalt
     [byte[]]$DerivedMasterKey
+    [byte[]]$InitializationVector
     [System.Collections.Generic.Dictionary[string, PasswordEntry]]$Entries
     [byte[]]$EncryptedEntries
 }
 
-$passwordEntry = [PasswordEntry]::new(0, $null, $pwname, [System.Text.Encoding]::UTF8.GetBytes($randomPassword), [System.Text.Encoding]::UTF8.GetBytes($NewEntryDescription))
-
-function E([byte[]]$k, [byte[]]$v) {
-    #https://gist.github.com/loadenmb/8254cee0f0287b896a05dcdc8a30042f
-    #[byte[]].
-    # $k | Add-Member -MemberType ScriptMethod -Name "op_ExclusiveOr" -Value {
-    #     param($v) # WTB tutorial ob powershell operator overloading
-    #     [System.Collections.Generic.List[byte]]$ret = [System.Collections.Generic.List[byte]]::new()
-    #     for($i = 0; $i -lt $v.Length; $i++) {
-    #         $ret.add($this[$i % $this.Length] -bxor $v[$i])
-    #     }
-    #     return $ret.ToArray()
-    # }
-    # return $k -bxor $v # lol this is bad its just temporary trust me :D
-
-    for($i = 0; $i -lt $v.Length; $i++) {
-        $v[$i] = $k[$i % $k.Length] -bxor $v[$i]
-    }
-    return $v
+if(!(Test-Path $DatabaseFile)) {
+    $passwordEntry = [PasswordEntry]::new(0, $null, $pwname, [System.Text.Encoding]::UTF8.GetBytes($randomPassword), [System.Text.Encoding]::UTF8.GetBytes($NewEntryDescription))
+} else {
+    # find next sequence number and add to the database
 }
+
+# function E([byte[]]$k, [byte[]]$v) {
+#     #https://gist.github.com/loadenmb/8254cee0f0287b896a05dcdc8a30042f
+#     #[byte[]].
+#     # $k | Add-Member -MemberType ScriptMethod -Name "op_ExclusiveOr" -Value {
+#     #     param($v) # WTB tutorial ob powershell operator overloading
+#     #     [System.Collections.Generic.List[byte]]$ret = [System.Collections.Generic.List[byte]]::new()
+#     #     for($i = 0; $i -lt $v.Length; $i++) {
+#     #         $ret.add($this[$i % $this.Length] -bxor $v[$i])
+#     #     }
+#     #     return $ret.ToArray()
+#     # }
+#     # return $k -bxor $v # lol this is bad its just temporary trust me :D
+#
+#     for($i = 0; $i -lt $v.Length; $i++) {
+#         $v[$i] = $k[$i % $k.Length] -bxor $v[$i]
+#     }
+#     return $v
+# }
 
 #E [byte[]]([char[]]"test") [byte[]]([char[]]"test")
 
-[System.Text.Encoding]::UTF8.GetBytes($randomPassword) | E $masterkey
+# [System.Text.Encoding]::UTF8.GetBytes($randomPassword) | E $masterkey
 
 if(!(Test-Path $DatabaseFile)) {
+    # This master password and related info will be encrypted by the user's x.509 PKI smartcard
     [byte[]]$ppbytes = [byte[]]::new(32) # pp=passphrase :)
     [byte[]]$ppsalt = [System.Byte[]]::new(32)
-    $rng.GetBytes($ppsalt, 0, $ppsalt.Length)
+    $rng.GetBytes($ppsalt, 0, $ppsalt.Length) # db file does not exist, generate new master key and salt
     $rng.GetBytes($ppbytes, 0, $ppbytes.Length)
 
     $keygen = [System.Security.Cryptography.Rfc2898DeriveBytes]::new($ppbytes, $ppsalt, $KeyDerivationIterations)
     $masterkey = $keygen.GetBytes(32)
+    $initializationVector = $keygen.GetBytes(16)
 
     $pwdb = [PasswordDatabase]::new()
     $pwdb.MasterKey = $ppbytes
     $pwdb.MasterSalt = $ppsalt
     $pwdb.DerivedMasterKey = $masterkey
+    $pwdb.InitializationVector = $initializationVector
     $pwdb.Entries = [System.Collections.Generic.Dictionary[string, PasswordEntry]]::new()
     $pwdb.Entries.Add($passwordEntry.id, $passwordEntry)
     $pwdb.EncryptedEntries = $null
 
-    #$Cipher = [AesGcm]::new()
-    #$Cipher = [AesCng]::new()
-    #$Cipher = [Aes]::Create()
-    $Cipher = [AesManaged]::Create()
-    $Cipher.BlockSize = 128
+    
+    $Cipher = [Aes]::Create()
     $Cipher.KeySize = 256
+    $Cipher.BlockSize = 128
+    $Cipher.Mode = [CipherMode]::CBC
+    $Cipher.Padding = [PaddingMode]::PKCS7
+    $Cipher.Key = $masterkey
+    $Cipher.IV = $initializationVector
+
+    $jsonEntries = $pwdb.Entries | ConvertTo-Json
+    $jsonEntriesBytes = [System.Text.Encoding]::UTF8.GetBytes($jsonEntries)
+    $encryptedEntries = $Cipher.CreateEncryptor().TransformFinalBlock($jsonEntriesBytes, 0, $jsonEntriesBytes.Length)
+    $pwdb.EncryptedEntries = $encryptedEntries
+    $pwdb.Entries.Clear()
+
+    # TODO: Encrypt the master key and salt with the user's x.509 PKI smartcard and assign the encrypted bytes to $pwdb.MasterKey and $pwdb.MasterSalt and $pwdb.DerivedMasterKey
+    # https://old.reddit.com/r/PowerShell/comments/3tc9ra/web_request_utilizing_smart_card_credentials/
+    # You can do more filtering here if there are other cert requirements...
+    $ValidCerts = [System.Security.Cryptography.X509Certificates.X509Certificate2[]](dir Cert:\CurrentUser\My | where { $_.NotAfter -gt (Get-Date) })
+
+    #$ValidCerts | select subject, DnsNameList, Issuer, EnhancedKeyUsageList, Archived, NotAfter | fl
+    #$Cert = $ValidCerts[0]
+    <#
+    # You could check $ValidCerts, and not do this prompt if it only contains 1...#>
+    $Cert = [System.Security.Cryptography.X509Certificates.X509Certificate2UI]::SelectFromCollection(
+    $ValidCerts,
+    'Choose a certificate',
+    'Choose a certificate',
+    'SingleSelection'
+    ) | select -First 1
+    #>
+
+    $Cert
+
+    # $Cipher = [AesManaged]::Create()
+    # $Cipher.BlockSize = 128
+    # $Cipher.KeySize = 256
     #$Cipher.Mode = [CipherMode]::GCM\ # hmmmmmmmmmm.......... https://gist.github.com/ctigeek/2a56648b923d198a6e60?permalink_comment_id=3794601
 
     # LOOKS LIKE WE ARE GOING TO IMPLEMENT AES-256-GCM OURSELF BOIS!

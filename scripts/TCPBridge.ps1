@@ -136,7 +136,7 @@ try {
 
             Write-Host -NoNewLine "Connecting to remote socket... "
             try {
-                # NOTE; THIS REMOTE SOCKET MUT BE REDECLARED BUS IT CANNOT BE REUSED AFTER IT IS CLOSED AND IF WE ARE HERE IT IS EITHER FRESH OR HAS ALREADY BEEN CLOSED AT LEAST ONCE. (I tried re-using a remote socket and it did not work, need to do the allocation / instantiation here :-( )
+                # NOTE; THIS REMOTE SOCKET MUT BE REDECLARED BECAUSE IT CANNOT BE REUSED AFTER IT IS CLOSED AND IF WE ARE HERE IT IS EITHER FRESH OR HAS ALREADY BEEN CLOSED AT LEAST ONCE. (I tried re-using a remote socket and it did not work, need to do the allocation / instantiation here :-( )
                 $RSocket = [System.Net.Sockets.Socket]::new(
                     [System.Net.Sockets.SocketType]::Stream,
                     [System.Net.Sockets.ProtocolType]::Tcp

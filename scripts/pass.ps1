@@ -40,7 +40,7 @@ Proposed method of operation:
    password you can regen the individualized necryption key for that password
    and decrypt and return the password
 
-   question: anythign gained with all the usages of KDF? And if I regenerate and
+   question: anything gained with all the usages of KDF? And if I regenerate and
    re-encrypt the whole document and each row every time a change is made using
    this method, doe3s that leak information?
 

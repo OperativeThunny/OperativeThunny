@@ -351,15 +351,22 @@ if(!(Test-Path $DatabaseFile)) {
     $pwdb.EncryptedEntries = $encryptedEntries
     $pwdb.Entries.Clear()
 
-    # TODO: Encrypt the master key and salt with the user's x.509 PKI smartcard and assign the encrypted bytes to $pwdb.MasterKey and $pwdb.MasterSalt and $pwdb.DerivedMasterKey
+    # TODO: Encrypt the master key and salt with the user's x.509 PKI smartcard and assign the encrypted bytes to $pwdb.MasterKey and $pwdb.MasterSalt
+    # https://www.cgoosen.com/2015/02/using-a-certificate-to-encrypt-credentials-in-automated-powershell-scripts/
     # https://old.reddit.com/r/PowerShell/comments/3tc9ra/web_request_utilizing_smart_card_credentials/
     # You can do more filtering here if there are other cert requirements...
-    $ValidCerts = [System.Security.Cryptography.X509Certificates.X509Certificate2[]](dir Cert:\CurrentUser\My | where { $_.NotAfter -gt (Get-Date) })
+    #$ValidCerts = [System.Security.Cryptography.X509Certificates.X509Certificate2[]](dir Cert:\CurrentUser\My | where { $_.NotAfter -gt (Get-Date) -and $_.HasPrivateKey -eq $true })
+    [System.Security.Cryptography.X509Certificates.X509Store]$CertStore = [System.Security.Cryptography.X509Certificates.X509Store]::new([System.Security.Cryptography.X509Certificates.StoreName]::My)
+    $CertStore.Open([System.Security.Cryptography.X509Certificates.OpenFlags]::ReadOnly)
+    $ValidCerts = $CertStore.Certificates | where { $_.NotAfter -gt (Get-Date) -and $_.HasPrivateKey -eq $true }
+    $CertStore.Close()
+    $CertStore.Dispose()
 
     #$ValidCerts | select subject, DnsNameList, Issuer, EnhancedKeyUsageList, Archived, NotAfter | fl
     #$Cert = $ValidCerts[0]
     <#
     # You could check $ValidCerts, and not do this prompt if it only contains 1...#>
+    [X509Certificates.X509Certificate2UI]::SelectFromCollection($ValidCerts, "Choose a certificate", "Choose a certificate", [X509Certificates.X509SelectionFlag]::SingleSelection ) | Select-Object -First 1
     $Cert = [System.Security.Cryptography.X509Certificates.X509Certificate2UI]::SelectFromCollection(
     $ValidCerts,
     'Choose a certificate',

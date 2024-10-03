@@ -356,8 +356,8 @@ if(!(Test-Path $DatabaseFile)) {
     # https://old.reddit.com/r/PowerShell/comments/3tc9ra/web_request_utilizing_smart_card_credentials/
     # You can do more filtering here if there are other cert requirements...
     #$ValidCerts = [System.Security.Cryptography.X509Certificates.X509Certificate2[]](dir Cert:\CurrentUser\My | where { $_.NotAfter -gt (Get-Date) -and $_.HasPrivateKey -eq $true })
-    [System.Security.Cryptography.X509Certificates.X509Store]$CertStore = [System.Security.Cryptography.X509Certificates.X509Store]::new([System.Security.Cryptography.X509Certificates.StoreName]::My)
-    $CertStore.Open([System.Security.Cryptography.X509Certificates.OpenFlags]::ReadOnly)
+    [X509Certificates.X509Store]$CertStore = [X509Certificates.X509Store]::new([X509Certificates.StoreName]::My)
+    $CertStore.Open([X509Certificates.OpenFlags]::ReadOnly)
     $ValidCerts = $CertStore.Certificates | where { $_.NotAfter -gt (Get-Date) -and $_.HasPrivateKey -eq $true }
     $CertStore.Close()
     $CertStore.Dispose()
@@ -367,7 +367,7 @@ if(!(Test-Path $DatabaseFile)) {
     <#
     # You could check $ValidCerts, and not do this prompt if it only contains 1...#>
     [X509Certificates.X509Certificate2UI]::SelectFromCollection($ValidCerts, "Choose a certificate", "Choose a certificate", [X509Certificates.X509SelectionFlag]::SingleSelection ) | Select-Object -First 1
-    $Cert = [System.Security.Cryptography.X509Certificates.X509Certificate2UI]::SelectFromCollection(
+    $Cert = [X509Certificates.X509Certificate2UI]::SelectFromCollection(
     $ValidCerts,
     'Choose a certificate',
     'Choose a certificate',

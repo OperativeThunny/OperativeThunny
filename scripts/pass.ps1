@@ -87,7 +87,12 @@ param(
     # $Passphrase,
 
     [Parameter(Mandatory=$false,
-               Position=1,
+               Position=1)]
+    [UInt64]
+    $Length = 33,
+
+    [Parameter(Mandatory=$false,
+               Position=2,
                #ParameterSetName="ParameterSetName",
                ValueFromPipeline=$true,
                ValueFromPipelineByPropertyName=$true,
@@ -98,24 +103,19 @@ param(
     $DatabaseFile = "./int0x80.bin",
 
     [Parameter(Mandatory=$false,
-               Position=2)]
-    [UInt64]
-    $Length = 33,
-
-    [Parameter(Mandatory=$false,
                Position=3)]
-    [switch]
-    $PromptForName = $false,
-
-    [Parameter(Mandatory=$false,
-               Position=4)]
     [string]
     $NewEntryName = $null,
 
     [Parameter(Mandatory=$false,
-               Position=5)]
+               Position=4)]
     [string]
     $NewEntryDescription = $null,
+
+    [Parameter(Mandatory=$false,
+    Position=5)]
+    [switch]
+    $PromptForName = $false,
 
     [Parameter(Mandatory=$false,
                Position=6)]
@@ -266,13 +266,15 @@ class PasswordEntry {
     [string]$sequence
     [string]$id
     [string]$name
-    [byte[]]$password
-    [byte[]]$secure_note
+    [string]$password
+    [string]$secure_note
+    [byte[]]$encryptedPassword
+    [byte[]]$encryptedSecure_note
 
-    PasswordEntry([string]$sequence, [string]$id, [string]$name, [byte[]]$password, [byte[]]$secure_note) {
+    PasswordEntry([string]$sequence, [string]$id, [string]$name, [string]$password, [string]$secure_note) {
         $this.sequence = $sequence
-        $this.id = if ($null -eq $id) { New-Guid } else { $id }
-        $this.name = if ($null -eq $name) { New-Guid } else { $name }
+        $this.id = if ($null -eq $id -or "" -eq $id) { New-Guid } else { $id }
+        $this.name = if ($null -eq $name -or "" -eq $name) { New-Guid } else { $name }
         $this.password = $password
         $this.secure_note = $secure_note
     }
@@ -288,33 +290,10 @@ class PasswordDatabase {
 }
 
 if(!(Test-Path $DatabaseFile)) {
-    $passwordEntry = [PasswordEntry]::new(0, $null, $pwname, [System.Text.Encoding]::UTF8.GetBytes($randomPassword), [System.Text.Encoding]::UTF8.GetBytes($NewEntryDescription))
+    $passwordEntry = [PasswordEntry]::new(0, $null, $pwname, $randomPassword, $NewEntryDescription)
 } else {
     # find next sequence number and add to the database
 }
-
-# function E([byte[]]$k, [byte[]]$v) {
-#     #https://gist.github.com/loadenmb/8254cee0f0287b896a05dcdc8a30042f
-#     #[byte[]].
-#     # $k | Add-Member -MemberType ScriptMethod -Name "op_ExclusiveOr" -Value {
-#     #     param($v) # WTB tutorial ob powershell operator overloading
-#     #     [System.Collections.Generic.List[byte]]$ret = [System.Collections.Generic.List[byte]]::new()
-#     #     for($i = 0; $i -lt $v.Length; $i++) {
-#     #         $ret.add($this[$i % $this.Length] -bxor $v[$i])
-#     #     }
-#     #     return $ret.ToArray()
-#     # }
-#     # return $k -bxor $v # lol this is bad its just temporary trust me :D
-#
-#     for($i = 0; $i -lt $v.Length; $i++) {
-#         $v[$i] = $k[$i % $k.Length] -bxor $v[$i]
-#     }
-#     return $v
-# }
-
-#E [byte[]]([char[]]"test") [byte[]]([char[]]"test")
-
-# [System.Text.Encoding]::UTF8.GetBytes($randomPassword) | E $masterkey
 
 if(!(Test-Path $DatabaseFile)) {
     # This master password and related info will be encrypted by the user's x.509 PKI smartcard
@@ -346,8 +325,15 @@ if(!(Test-Path $DatabaseFile)) {
     $Cipher.IV = $initializationVector
 
     $jsonEntries = $pwdb.Entries | ConvertTo-Json
+    
+    $jsonEntries 
+
+    exit -1
+
     $jsonEntriesBytes = [System.Text.Encoding]::UTF8.GetBytes($jsonEntries)
     $encryptedEntries = $Cipher.CreateEncryptor().TransformFinalBlock($jsonEntriesBytes, 0, $jsonEntriesBytes.Length)
+    # b64 encode the encrypted entries
+    $encryptedEntries = [Convert]::ToBase64String($encryptedEntries)
     $pwdb.EncryptedEntries = $encryptedEntries
     $pwdb.Entries.Clear()
 
@@ -358,25 +344,36 @@ if(!(Test-Path $DatabaseFile)) {
     #$ValidCerts = [System.Security.Cryptography.X509Certificates.X509Certificate2[]](dir Cert:\CurrentUser\My | where { $_.NotAfter -gt (Get-Date) -and $_.HasPrivateKey -eq $true })
     [X509Certificates.X509Store]$CertStore = [X509Certificates.X509Store]::new([X509Certificates.StoreName]::My)
     $CertStore.Open([X509Certificates.OpenFlags]::ReadOnly)
-    $ValidCerts = $CertStore.Certificates | where { $_.NotAfter -gt (Get-Date) -and $_.HasPrivateKey -eq $true }
-    $CertStore.Close()
-    $CertStore.Dispose()
-
-    #$ValidCerts | select subject, DnsNameList, Issuer, EnhancedKeyUsageList, Archived, NotAfter | fl
-    #$Cert = $ValidCerts[0]
+    [X509Certificates.X509Certificate2Collection]$ValidCerts = $CertStore.Certificates | where { $_.NotAfter -gt (Get-Date) -and $_.HasPrivateKey -eq $true }
+    
     <#
     # You could check $ValidCerts, and not do this prompt if it only contains 1...#>
-    [X509Certificates.X509Certificate2UI]::SelectFromCollection($ValidCerts, "Choose a certificate", "Choose a certificate", [X509Certificates.X509SelectionFlag]::SingleSelection ) | Select-Object -First 1
-    $Cert = [X509Certificates.X509Certificate2UI]::SelectFromCollection(
-    $ValidCerts,
-    'Choose a certificate',
-    'Choose a certificate',
-    'SingleSelection'
-    ) | select -First 1
-    #>
+    if ($ValidCerts.Count -eq 0) {
+        Write-Error "No valid certificates found!"
+        exit -1
+    }
+
+    $Cert = $ValidCerts[0]
+    
+    if ($ValidCerts.Count -gt 1) {
+        $Cert = [X509Certificates.X509Certificate2UI]::SelectFromCollection(
+            $ValidCerts,
+            'Choose a certificate',
+            'Choose a certificate',
+            [X509Certificates.X509SelectionFlag]::SingleSelection
+        ) | Select-Object -First 1
+    }
+
+    $EncryptedMasterKey = $Cert.PublicKey.Key.Encrypt($ppbytes, $true)
+    $EncryptedMasterSalt = $Cert.PublicKey.Key.Encrypt($ppsalt, $true)
+
+    $pwdb.MasterKey = $EncryptedMasterKey
+    $pwdb.MasterSalt = $EncryptedMasterSalt
 
     $Cert
 
+    $CertStore.Close()
+    $CertStore.Dispose()
     # $Cipher = [AesManaged]::Create()
     # $Cipher.BlockSize = 128
     # $Cipher.KeySize = 256

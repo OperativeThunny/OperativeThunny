@@ -10,7 +10,7 @@
  * @author OperativeThunny
  * @license Affero General Public License v3.0 (AGPL-3.0) https://opensource.org/licenses/AGPL-3.0 / https://www.gnu.org/licenses/agpl-3.0.en.html
  */
-// If you try to declare the funciton in the hipster newschool way of javascript using the const keyword,
+// If you try to declare the function in the hipster newschool way of javascript using the const keyword,
 // then it will not work because at the site of invocation,
 // the function will be undefined because of javascript hoisting differences between var, function, const, and let keywords.
 function FindProxyForURL(url, host) {

@@ -25,20 +25,35 @@ Proposed method of operation:
    for the master key then securely generate some amount of bytes for a salt and
    feed the master key and salt into the KDF to get a generator for further
    keys, use 32 bytes from that as the master encryption key, K, fed into AES
-   for encrypting the json document, then for each password you generate or add
-   to the password document you generate a guid to act as an ID. Each record
-   would be (sequence num, uuid, name, password) and then using 32 bytes from
-   the master key gen as the "password" and salted with the UUID for the
-   particular password fed into a new KDF instance, you encrpt each individual
-   password, then once all the passwords are encrypted using their unique
-   derived keys you encrypt the whole array of entry rows using the master
-   encryption key, K, then you encrypt the original salt and master key using
-   the users's certificate, and sign the whole document of encrypted key and
-   encrypted row data using the certificate. Then when youneed to search based
-   on name, you can decrypt thejson array and rehydrate it into an array of
-   objects and search through the name fields, and when you find the right
-   password you can regen the individualized necryption key for that password
-   and decrypt and return the password
+   for encrypting the json document; then for each password you generate or add
+   to the password document you generate a UUID to act as an ID. Each record
+   would be (sequence num, uuid, name, password, secure note) and then using 32
+   bytes from the master key gen as the "password" and salted with the UUID for
+   the particular password fed into a new KDF instance, you encrpt each
+   individual password, then once all the passwords are encrypted using their
+   unique derived keys you encrypt the whole array of entry rows using the
+   master encryption key, K, then you encrypt the original salt and master key
+   using the users's certificate, and sign the whole document of encrypted key
+   and encrypted row data using the certificate. Then when you need to search
+   based on name, you can decrypt the json array and rehydrate it into an array
+   of objects and search through the name fields, and when you find the right
+   password you can regen the individualized encryption key for that password
+   and decrypt and return the password.
+
+   In bullet form:
+    1. Generate 32 bytes for master key, 32 bytes for salt
+    2. Feed master key and salt into KDF to get master encryption key, K
+    3. Generate UUID for each password entry
+    4. For each password entry, generate 32 bytes for row derivation key, feed into KDF
+       with UUID as salt to get individualized encryption key, K_i
+    5. Encrypt each password entry with K_i
+    6. Encrypt the whole array of password entries with K
+    7. Encrypt the master key and salt with user's certificate
+    8. Sign the whole document with user's certificate
+    9. To search, decrypt the json array and rehydrate it into an array of objects
+    10. Search through the name fields
+    11. When you find the right password, regenerate the individualized encryption key
+        for that password and decrypt and return the password
 
    question: anything gained with all the usages of KDF? And if I regenerate and
    re-encrypt the whole document and each row every time a change is made using
@@ -190,7 +205,7 @@ $AsciiCharacterClasses = [ordered]@{
 #$randomPassword = (Get-Random -Count $Length -InputObject $AllCharacterClasses) -join ""
 
 # Could be a simple one liner but since we are dealing with passwords, we should probably make sure it is generated in a cryptographically secure way:
-[System.Security.Cryptography.RandomNumberGenerator]$rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+[RandomNumberGenerator]$rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
 [byte[]]$randomPasswordSeedBytes = [byte[]]::new($Length)
 [byte[]]$randomPasswordSeedRegen = [byte[]]::new($Length)
 [byte[]]$randomPasswordIndicies = [byte[]]::new($Length)
@@ -238,6 +253,7 @@ if ($Operation -eq "generate") {
 }
 
 Write-Host -BackgroundColor Green "The generated password is {{{{$randomPassword}}}}"
+Write-Host -BackgroundColor Black ""
 
 if ($PromptForName) {
     $pwname = Read-Host -Prompt "What would you like to name this password?"
@@ -271,9 +287,9 @@ class PasswordEntry {
     [byte[]]$encryptedPassword
     [byte[]]$encryptedSecure_note
 
-    PasswordEntry([string]$sequence, [string]$id, [string]$name, [string]$password, [string]$secure_note) {
+    PasswordEntry([string]$sequence, [string]$name, [string]$password, [string]$secure_note) {
         $this.sequence = $sequence
-        $this.id = if ($null -eq $id -or "" -eq $id) { New-Guid } else { $id }
+        $this.id = New-Guid
         $this.name = if ($null -eq $name -or "" -eq $name) { New-Guid } else { $name }
         $this.password = $password
         $this.secure_note = $secure_note
@@ -289,33 +305,65 @@ class PasswordDatabase {
     [byte[]]$EncryptedEntries
 }
 
-if(!(Test-Path $DatabaseFile)) {
-    $passwordEntry = [PasswordEntry]::new(0, $null, $pwname, $randomPassword, $NewEntryDescription)
-} else {
-    # find next sequence number and add to the database
+$passwordEntry = [PasswordEntry]::new(0, $pwname, $randomPassword, $NewEntryDescription)
+
+if(Test-Path $DatabaseFile) {
+    # TODO: find next sequence number and add to the database
 }
 
 if(!(Test-Path $DatabaseFile)) {
+    $pwdb = [PasswordDatabase]::new()
+    $pwdb.Entries = [System.Collections.Generic.Dictionary[string, PasswordEntry]]::new()
+    $pwdb.Entries.Add($passwordEntry.id, $passwordEntry)
+    # $Cipher = [AesManaged]::Create()
+    # $Cipher.BlockSize = 128
+    # $Cipher.KeySize = 256
+    #$Cipher.Mode = [CipherMode]::GCM\ # hmmmmmmmmmm.......... https://gist.github.com/ctigeek/2a56648b923d198a6e60?permalink_comment_id=3794601
+
+    # LOOKS LIKE WE ARE GOING TO IMPLEMENT AES-256-GCM OURSELF BOIS!
+    # https://csrc.nist.rip/groups/ST/toolkit/BCM/documents/proposedmodes/gcm/gcm-spec.pdf
+    # NOTE: THERE IS A VULNERABILITY IF NONCE VALUES ARE RE-USED WITH THE SAME ENCRYPTION KEY! DON'T DO THAT!
+    # https://ludvigknutsmark.github.io/posts/breaking_aes_gcm_part2/
+    # https://github.com/Metalnem/aes-gcm-siv/blob/master/src/Cryptography/AesGcmSiv.cs
+    # https://gist.github.com/Darryl-G/d1039c2407262cb6d735c3e7a730ee86
+    # https://www.it-implementor.co.uk/2021/04/powershell-encrypt-decrypt-openssl-aes256-cbc.html
+    # https://datatracker.ietf.org/doc/html/rfc8452
+    # https://en.wikipedia.org/wiki/AES-GCM-SIV
+    # https://stackoverflow.com/questions/10655026/gcm-multiplication-implementation
+    # https://nvlpubs.nist.gov/nistpubs/Legacy/SP/nistspecialpublication800-38d.pdf
+    #https://github.com/traviscross/bgaes/blob/master/gf128mul.h
+} else {
+    $ciphertextjson = Get-Content $DatabaseFile
+    # TODO: Decryption...
+    $pwdb = $ciphertextjson | ConvertFrom-Json
+    $passwordEntry.sequence = $pwdb.Entries.Count
+}
+
+function Protect-PasswordDatabase {
+    param (
+        [Parameter(Mandatory=$true)]
+        [PasswordDatabase]$pwdb
+    )
+
+    [RandomNumberGenerator]$rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
     # This master password and related info will be encrypted by the user's x.509 PKI smartcard
     [byte[]]$ppbytes = [byte[]]::new(32) # pp=passphrase :)
     [byte[]]$ppsalt = [System.Byte[]]::new(32)
     $rng.GetBytes($ppsalt, 0, $ppsalt.Length) # db file does not exist, generate new master key and salt
     $rng.GetBytes($ppbytes, 0, $ppbytes.Length)
 
-    $keygen = [System.Security.Cryptography.Rfc2898DeriveBytes]::new($ppbytes, $ppsalt, $KeyDerivationIterations)
+    $keygen = [Rfc2898DeriveBytes]::new($ppbytes, $ppsalt, $KeyDerivationIterations)
     $masterkey = $keygen.GetBytes(32)
     $initializationVector = $keygen.GetBytes(16)
-
-    $pwdb = [PasswordDatabase]::new()
+    
     $pwdb.MasterKey = $ppbytes
     $pwdb.MasterSalt = $ppsalt
     $pwdb.DerivedMasterKey = $masterkey
     $pwdb.InitializationVector = $initializationVector
-    $pwdb.Entries = [System.Collections.Generic.Dictionary[string, PasswordEntry]]::new()
-    $pwdb.Entries.Add($passwordEntry.id, $passwordEntry)
+    # $pwdb.Entries = [System.Collections.Generic.Dictionary[string, PasswordEntry]]::new()
+    # $pwdb.Entries.Add($passwordEntry.id, $passwordEntry)
     $pwdb.EncryptedEntries = $null
 
-    
     $Cipher = [Aes]::Create()
     $Cipher.KeySize = 256
     $Cipher.BlockSize = 128
@@ -346,8 +394,6 @@ if(!(Test-Path $DatabaseFile)) {
     $CertStore.Open([X509Certificates.OpenFlags]::ReadOnly)
     [X509Certificates.X509Certificate2Collection]$ValidCerts = $CertStore.Certificates | where { $_.NotAfter -gt (Get-Date) -and $_.HasPrivateKey -eq $true }
     
-    <#
-    # You could check $ValidCerts, and not do this prompt if it only contains 1...#>
     if ($ValidCerts.Count -eq 0) {
         Write-Error "No valid certificates found!"
         exit -1
@@ -374,26 +420,4 @@ if(!(Test-Path $DatabaseFile)) {
 
     $CertStore.Close()
     $CertStore.Dispose()
-    # $Cipher = [AesManaged]::Create()
-    # $Cipher.BlockSize = 128
-    # $Cipher.KeySize = 256
-    #$Cipher.Mode = [CipherMode]::GCM\ # hmmmmmmmmmm.......... https://gist.github.com/ctigeek/2a56648b923d198a6e60?permalink_comment_id=3794601
-
-    # LOOKS LIKE WE ARE GOING TO IMPLEMENT AES-256-GCM OURSELF BOIS!
-    # https://csrc.nist.rip/groups/ST/toolkit/BCM/documents/proposedmodes/gcm/gcm-spec.pdf
-    # NOTE: THERE IS A VULNERABILITY IF NONCE VALUES ARE RE-USED WITH THE SAME ENCRYPTION KEY! DON'T DO THAT!
-    # https://ludvigknutsmark.github.io/posts/breaking_aes_gcm_part2/
-    # https://github.com/Metalnem/aes-gcm-siv/blob/master/src/Cryptography/AesGcmSiv.cs
-    # https://gist.github.com/Darryl-G/d1039c2407262cb6d735c3e7a730ee86
-    # https://www.it-implementor.co.uk/2021/04/powershell-encrypt-decrypt-openssl-aes256-cbc.html
-    # https://datatracker.ietf.org/doc/html/rfc8452
-    # https://en.wikipedia.org/wiki/AES-GCM-SIV
-    # https://stackoverflow.com/questions/10655026/gcm-multiplication-implementation
-    # https://nvlpubs.nist.gov/nistpubs/Legacy/SP/nistspecialpublication800-38d.pdf
-    #https://github.com/traviscross/bgaes/blob/master/gf128mul.h
-} else {
-    $ciphertextjson = Get-Content $DatabaseFile
-    # TODO: Decryption...
-    $pwdb = $ciphertextjson | ConvertFrom-Json
-    $passwordEntry.sequence = $pwdb.Length
 }

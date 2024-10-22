@@ -420,4 +420,6 @@ function Protect-PasswordDatabase {
 
     $CertStore.Close()
     $CertStore.Dispose()
+
+    return $pwdb
 }
